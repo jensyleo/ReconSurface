@@ -4,10 +4,6 @@ A lightweight attack-surface reconnaissance tool for domains and hosts, similar 
 
 Current version: v2.8
 
-## Screenshot
-
-![ReconSurface main menu](screenshot.png)
-
 ## Features
 
 - **Three analysis modes:**
