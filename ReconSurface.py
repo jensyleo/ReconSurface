@@ -1148,7 +1148,7 @@ def create_output_directory(domain):
             for _, folder_path in folders_a_remove:
                 try:
                     shutil.rmtree(folder_path)
-                    print_colored(f"[+] Removed folder old: {os.path.basename(folder_path)}", Colors.YELLOW)
+                    print_colored(f"[+] Removed old result folder: {os.path.basename(folder_path)}", Colors.YELLOW)
                 except Exception as e:
                     print_colored(f"[!] Could not remove old folder {os.path.basename(folder_path)}: {str(e)}", Colors.YELLOW)
             print_colored(f"[+] Keeping max 3 folders in RESULTS/", Colors.GREEN)
@@ -1239,9 +1239,9 @@ def verify_dependencies():
             missing.append(cmd)
     
     if missing:
-        print_colored(f"\n[!] Instale the dependencies missing:", Colors.YELLOW)
-        
-        # Instructions of installation for system operating
+        print_colored(f"\n[!] Install the missing dependencies:", Colors.YELLOW)
+
+        # Installation instructions by operating system
         print_colored("\n🐧 Ubuntu/Debian:", Colors.CYAN)
         if 'curl' in missing:
             print_colored("   sudo apt update && sudo apt install curl", Colors.WHITE)
