@@ -2817,9 +2817,6 @@ def run_nmap_stream(target, sudo_password, ports="-p-", out_dir=None):
             i = 0
             while progress_nmap['active']:
                 try:
-                    elapsed = time.time() - start_time
-                    elapsed_formatted = f"{int(elapsed//3600):02d}:{int((elapsed%3600)//60):02d}:{int(elapsed%60):02d}"
-                    
                     # WATCHDOG: if had progress real but stopped of reach for too much time, resume calculation internal
                     if progress_nmap['progress_real_nmap_available'] and not progress_nmap['phase_scan_completed']:
                         if progress_nmap['last_timing_real'] is not None:
@@ -3154,6 +3151,10 @@ def run_nmap_stream(target, sudo_password, ports="-p-", out_dir=None):
                                 # Scan -sS in progress
                                 counters = f"({progress_nmap['ports_scanned']}/{progress_nmap['total_ports']})"
                                 phase_text = " (scanning ports)"
+                        # Recalculate elapsed time just before printing (fixes frozen timer issue)
+                        elapsed = time.time() - start_time
+                        elapsed_formatted = f"{int(elapsed//3600):02d}:{int((elapsed%3600)//60):02d}:{int(elapsed%60):02d}"
+
                         # build message complete
                         message = f"[*] Scanning {progress_nmap['target']}... {chars[i % len(chars)]} {percentage}% {counters}{phase_text} - {elapsed_formatted}"
                         # limit width from the message a 80 characters max for avoid wrap from the terminal
@@ -3168,6 +3169,10 @@ def run_nmap_stream(target, sudo_password, ports="-p-", out_dir=None):
                         sys.stdout.flush()
                     else:
                         # If not there is ports detected, show progress basic
+                        # Recalculate elapsed time just before printing (fixes frozen timer issue)
+                        elapsed = time.time() - start_time
+                        elapsed_formatted = f"{int(elapsed//3600):02d}:{int((elapsed%3600)//60):02d}:{int(elapsed%60):02d}"
+
                         message = f"[*] Scanning {progress_nmap['target']}... {chars[i % len(chars)]} 0% - {elapsed_formatted}"
                         # limit width from the message
                         if len(message) > 80:
