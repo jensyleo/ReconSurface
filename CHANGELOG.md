@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - Silent OSINT DNS verification (195 candidates): replaced with parallel-threaded progress bar matching existing patterns
 - Slow analysis completion: parallelized reverse DNS lookups from sequential to ThreadPoolExecutor (25 workers)
 - Terminal left in raw mode between progress threads: increased `join()` timeout and added `_ensure_terminal_sane()` fallback
+- Frozen timer during Nmap scan: recalculate elapsed time immediately before printing (was stale if stdout.flush() blocked on slow terminals)
 
 ### Removed
 - 26 redundant local imports of os, sys, re, time, threading, subprocess (already imported globally)
