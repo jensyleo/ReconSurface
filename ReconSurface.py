@@ -3860,13 +3860,6 @@ def group_domains_by_shared_ips(subdomains_per_ip):
     return [group['domains'] for group in groups]
 
 
-def summarize_domains(domains, limit=3):
-    """Short text of a list of domains: the first ones plus a count of the rest."""
-    if len(domains) <= limit:
-        return ', '.join(domains)
-    return f"{', '.join(domains[:limit])} ... and {len(domains) - limit} more"
-
-
 def most_shared_ip(group_domains, subdomains_per_ip):
     """IP used by the most domains of the group (first appearance wins a tie)."""
     counts = {}
@@ -3900,7 +3893,26 @@ def print_shared_ip_table(group_domains, subdomains_per_ip, common_ip):
         cells = [f"{ip:^{cols[0][1]}}", f"{count:^{cols[1][1]}}", f"{share:^{cols[2][1]}}", f"{role:^{cols[3][1]}}"]
         print_colored(f"{pad}║" + "║".join(cells) + "║", color)
     print_colored(f"{pad}╚{'╩'.join('═' * w for _, w in cols)}╝", Colors.CYAN)
-    print_colored(f"{pad}Domains: {summarize_domains(group_domains)}", Colors.WHITE)
+    print_domains_table(group_domains, subdomains_per_ip)
+
+
+def print_domains_table(group_domains, subdomains_per_ip):
+    """Prints every domain of the group with its IPs, in the same style as Table 2."""
+    domain_width = max(len("DOMAIN"), max(len(d) for d in group_domains)) + 2
+    ips_width = max(len("IPS"), max(len(", ".join(dict.fromkeys(subdomains_per_ip[d]))) for d in group_domains)) + 2
+    num_width = max(len("#"), len(str(len(group_domains)))) + 2
+    width_total = num_width + domain_width + ips_width + 2
+    pad = " " * max(0, (get_terminal_width() - width_total - 2) // 2)
+
+    print_colored(f"\n{pad}{'═' * (width_total + 2)}", Colors.CYAN)
+    print_colored(f"{pad}║{'DOMAINS OF THE GROUP':^{width_total}}║", Colors.BOLD + Colors.WHITE)
+    print_colored(f"{pad}╠{'═' * num_width}╦{'═' * domain_width}╦{'═' * ips_width}╣", Colors.CYAN)
+    print_colored(f"{pad}║{'#':^{num_width}}║{'DOMAIN':^{domain_width}}║{'IPS':^{ips_width}}║", Colors.BOLD + Colors.YELLOW)
+    print_colored(f"{pad}╠{'═' * num_width}╬{'═' * domain_width}╬{'═' * ips_width}╣", Colors.CYAN)
+    for index, domain in enumerate(group_domains, start=1):
+        ips = ", ".join(dict.fromkeys(subdomains_per_ip[domain]))
+        print_colored(f"{pad}║{index:^{num_width}}║{domain:^{domain_width}}║{ips:^{ips_width}}║", Colors.WHITE)
+    print_colored(f"{pad}╚{'═' * num_width}╩{'═' * domain_width}╩{'═' * ips_width}╝", Colors.CYAN)
 
 
 def select_ip_scope_interactive(group_domains, subdomains_per_ip):
