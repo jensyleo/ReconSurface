@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- IP selection submenu when a domain resolves to several IPs: scan the first IP found or all of them
+
+### Changed
+- Each unique IP is scanned once; its results are copied to every domain that resolves to it
+
 ## [2.8] - 2025-07-16
 
 ### Added

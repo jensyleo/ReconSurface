@@ -96,6 +96,8 @@ Port scan submenu (options 2 and 3):
 4. Mixed (e.g. `1-1000,8080,9000`)
 5. All ports (`-p-`)
 
+When a domain resolves to several IPs, a submenu asks whether to scan the first IP found or all of them. Domains sharing an IP are scanned once per IP, and the results are shown for each of them.
+
 Nmap requires elevated privileges; the program prompts for the sudo password interactively (up to 3 attempts) and never stores it.
 
 ### CONTROL-C handling

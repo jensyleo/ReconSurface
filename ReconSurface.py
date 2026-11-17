@@ -3840,49 +3840,109 @@ def parse_nmap_xml(xml_file, target_original=None):
         print_colored(f"[!] Error parsing XML: {str(e)}", Colors.RED)
         return []
 
+def select_ip_scope_interactive(domain, ips):
+    """Submenu to choose which IPs of a domain are scanned when it resolves to several.
+
+    Options:
+        1. Scan the first IP found
+        2. Scan all the IPs
+
+    Returns:
+        list: IPs to scan (one or all of the received IPs).
+        None: if the user cancels with CONTROL-C.
+    """
+    print_colored(f"\n[*] {domain} resolves to {len(ips)} IPs: {', '.join(ips)}", Colors.YELLOW)
+
+    terminal_width = get_terminal_width()
+    menu_width = 52
+    margin = (terminal_width - menu_width) // 2
+
+    print(f"\n{RGB_GREEN}{' ' * margin}╔{'═' * menu_width}╗{RESET_COLOR}")
+    print(f"{RGB_GREEN}{' ' * margin}║{RGB_BLUE}{'IPS TO SCAN':^52}{RGB_GREEN}║{RESET_COLOR}")
+    print(f"{RGB_GREEN}{' ' * margin}╠{'═' * menu_width}╣{RESET_COLOR}")
+    print(f"{RGB_GREEN}{' ' * margin}║ {RGB_YELLOW}[1]{RGB_BLUE} 🎯 {Colors.WHITE}{pad_menu_line(f'Scan the first IP found ({ips[0]})', menu_width - 8)}{RGB_GREEN}║{RESET_COLOR}")
+    print(f"{RGB_GREEN}{' ' * margin}║ {RGB_YELLOW}[2]{RGB_BLUE} 🌐 {Colors.WHITE}{pad_menu_line(f'Scan all the IPs ({len(ips)})', menu_width - 8)}{RGB_GREEN}║{RESET_COLOR}")
+    print(f"{RGB_GREEN}{' ' * margin}╚{'═' * menu_width}╝{RESET_COLOR}")
+
+    while True:
+        try:
+            option_ip = input(f"\n{RGB_BLUE}[?] {Colors.WHITE}Select an option {RGB_YELLOW}(1-2){Colors.WHITE}: ").strip()
+            if option_ip == "1":
+                return [ips[0]]
+            elif option_ip == "2":
+                return list(ips)
+            print_colored(f"[-] Enter 1 or 2", Colors.RED)
+        except KeyboardInterrupt:
+            print_colored(f"\n[*] Scan cancelled for the user", Colors.RED)
+            return None
+
 def run_scan_ports(subdomains_per_ip, sudo_password, ports="-p-", out_dir=None):
-    """Runs nmap sequentially for each FQDN showing live progress and accumulating results.
+    """Runs nmap once per unique IP and assigns the results to every domain that resolves to it.
+
+    Domains that share an IP are grouped so that the IP is scanned only once. The
+    accumulated rows are then copied to each associated domain, so every domain
+    shows the full set of open ports of its IP. Domains without a known IP are
+    scanned by name, as before.
 
     If out_dir is provided, saves the raw Nmap output for the target for diagnostics.
     """
     results = []
-    targets = list(subdomains_per_ip.keys())
-    for target in targets:
-        print_colored(f"\n[*] Starting scan of ports for: {target}", Colors.BLUE)
-        xml_file = run_nmap_stream(target, sudo_password, ports, out_dir)
-        
+
+    # Domains with several IPs: ask which of them to scan
+    selected_ips = {}
+    for domain, ips in subdomains_per_ip.items():
+        unique_ips = list(dict.fromkeys(ips))
+        if len(unique_ips) > 1:
+            unique_ips = select_ip_scope_interactive(domain, unique_ips)
+            if unique_ips is None:
+                return results
+        selected_ips[domain] = unique_ips or [domain]
+
+    # Group domains by IP: {scan_target: [domain, ...]}
+    scan_groups = {}
+    for domain, scan_targets in selected_ips.items():
+        for scan_target in scan_targets:
+            scan_groups.setdefault(scan_target, []).append(domain)
+
+    for scan_target, domains in scan_groups.items():
+        shared_text = f" (shared by: {', '.join(domains)})" if len(domains) > 1 else ""
+        print_colored(f"\n[*] Starting scan of ports for: {scan_target}{shared_text}", Colors.BLUE)
+        xml_file = run_nmap_stream(scan_target, sudo_password, ports, out_dir)
+
         # parse from XML if is available
         if xml_file and os.path.exists(xml_file):
-            parsed = parse_nmap_xml(xml_file, target)
+            parsed = parse_nmap_xml(xml_file, scan_target)
         else:
             # Detailed diagnostic of the issue
             if not xml_file:
-                print_colored(f"[!] No XML file was generated for {target} (xml_file is None)", Colors.RED)
+                print_colored(f"[!] No XML file was generated for {scan_target} (xml_file is None)", Colors.RED)
             elif not os.path.exists(xml_file):
                 print_colored(f"[!] File XML not found: {xml_file}", Colors.RED)
             else:
-                print_colored(f"[!] Could not get the XML file for {target}", Colors.RED)
+                print_colored(f"[!] Could not get the XML file for {scan_target}", Colors.RED)
             parsed = []
-        # Diagnostic: report of amount of ports detected for each target
-        try:
-            count_obj = sum(1 for r in parsed if r.get('target_original') == target)
-        except Exception:
-            count_obj = len(parsed)
-        if count_obj > 0:
-            print_colored(f"[+] Open ports detected for {target}: {count_obj}", Colors.GREEN)
-        else:
-            print_colored(f"[-] No open ports detected for {target}", Colors.YELLOW)
-            # Add a row of 'without detection' for that appears in the table
-            results.append({
-                'target': target,
-                'target_original': target,
-                'port': 'Without DETECTION',
-                'service': 'Without DETECTION',
-                'version': 'Without DETECTION',
-                'status': 'N/A',  # No detection - the status cannot be determined
-                'sin_detection': True
-            })
-        results.extend(parsed)
+
+        # Copy the scan results to each domain associated with this IP
+        for domain in domains:
+            domain_rows = [
+                dict(row, target=(domain if row['target'] else ''), target_original=domain)
+                for row in parsed
+            ]
+            if domain_rows:
+                print_colored(f"[+] Open ports detected for {domain}: {len(domain_rows)}", Colors.GREEN)
+                results.extend(domain_rows)
+            else:
+                print_colored(f"[-] No open ports detected for {domain}", Colors.YELLOW)
+                # Add a row of 'without detection' for that appears in the table
+                results.append({
+                    'target': domain,
+                    'target_original': domain,
+                    'port': 'Without DETECTION',
+                    'service': 'Without DETECTION',
+                    'version': 'Without DETECTION',
+                    'status': 'N/A',  # No detection - the status cannot be determined
+                    'sin_detection': True
+                })
     return results
 
 def print_table_nmap(results, domain_base=None):
