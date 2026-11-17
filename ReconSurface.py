@@ -3930,17 +3930,22 @@ def select_ip_scope_interactive(group_domains, subdomains_per_ip):
     print(f"{RGB_GREEN}{' ' * margin}║ {RGB_YELLOW}[2]{RGB_BLUE} 🌐 {Colors.WHITE}{pad_menu_line(f'All the IPs of the group ({len(union_ips)})', menu_width - 8)}{RGB_GREEN}║{RESET_COLOR}")
     print(f"{RGB_GREEN}{' ' * margin}╚{'═' * menu_width}╝{RESET_COLOR}")
 
-    while True:
-        try:
-            option_ip = input(f"\n{RGB_BLUE}[?] {Colors.WHITE}Select an option {RGB_YELLOW}(1-2){Colors.WHITE}: ").strip()
-            if option_ip == "1":
-                return 'common'
-            elif option_ip == "2":
-                return 'all'
-            print_colored(f"[-] Enter 1 or 2", Colors.RED)
-        except KeyboardInterrupt:
-            print_colored(f"\n[*] Scan cancelled for the user", Colors.RED)
-            return None
+    import signal
+    _handler_previo = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        while True:
+            try:
+                option_ip = input(f"\n{RGB_BLUE}[?] {Colors.WHITE}Select an option {RGB_YELLOW}(1-2){Colors.WHITE}: ").strip()
+                if option_ip == "1":
+                    return 'common'
+                elif option_ip == "2":
+                    return 'all'
+                print_colored(f"[-] Enter 1 or 2", Colors.RED)
+            except KeyboardInterrupt:
+                print_colored(f"\n[*] Scan cancelled for the user", Colors.RED)
+                return None
+    finally:
+        signal.signal(signal.SIGINT, _handler_previo)
 
 
 def run_scan_ports(subdomains_per_ip, sudo_password, ports="-p-", out_dir=None):
@@ -3960,7 +3965,7 @@ def run_scan_ports(subdomains_per_ip, sudo_password, ports="-p-", out_dir=None):
     for group_domains in group_domains_by_shared_ips(subdomains_per_ip):
         choice = select_ip_scope_interactive(group_domains, subdomains_per_ip)
         if choice is None:
-            return results
+            return None
         if choice == 'common':
             common_ip = most_shared_ip(group_domains, subdomains_per_ip)
             for domain in group_domains:
@@ -4616,6 +4621,8 @@ def run_flow_scan_ports(domain, subdomains_per_ip, ports_scan="-p-"):
 
     # Run scan of ports with nmap and live progress (saving raw)
     results_nmap = run_scan_ports(subdomains_per_ip, sudo_password, ports_scan, out_dir)
+    if results_nmap is None:
+        return "abort"  # User cancelled the IP selection
 
     # out_dir already was created arriba
     session_tag = os.path.basename(out_dir)
