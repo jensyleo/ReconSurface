@@ -3896,23 +3896,66 @@ def print_shared_ip_table(group_domains, subdomains_per_ip, common_ip):
     print_domains_table(group_domains, subdomains_per_ip)
 
 
-def print_domains_table(group_domains, subdomains_per_ip):
-    """Prints every domain of the group with its IPs, in the same style as Table 2."""
+DOMAINS_TABLE_FILE_THRESHOLD = 200
+
+
+def build_domains_table_lines(group_domains, subdomains_per_ip):
+    """Lines of the table with every domain of the group and its IPs (no colors)."""
     domain_width = max(len("DOMAIN"), max(len(d) for d in group_domains)) + 2
     ips_width = max(len("IPS"), max(len(", ".join(dict.fromkeys(subdomains_per_ip[d]))) for d in group_domains)) + 2
     num_width = max(len("#"), len(str(len(group_domains)))) + 2
     width_total = num_width + domain_width + ips_width + 2
-    pad = " " * max(0, (get_terminal_width() - width_total - 2) // 2)
 
-    print_colored(f"\n{pad}{'═' * (width_total + 2)}", Colors.CYAN)
-    print_colored(f"{pad}║{'DOMAINS OF THE GROUP':^{width_total}}║", Colors.BOLD + Colors.WHITE)
-    print_colored(f"{pad}╠{'═' * num_width}╦{'═' * domain_width}╦{'═' * ips_width}╣", Colors.CYAN)
-    print_colored(f"{pad}║{'#':^{num_width}}║{'DOMAIN':^{domain_width}}║{'IPS':^{ips_width}}║", Colors.BOLD + Colors.YELLOW)
-    print_colored(f"{pad}╠{'═' * num_width}╬{'═' * domain_width}╬{'═' * ips_width}╣", Colors.CYAN)
+    lines = [
+        "═" * (width_total + 2),
+        f"║{'DOMAINS OF THE GROUP':^{width_total}}║",
+        f"╠{'═' * num_width}╦{'═' * domain_width}╦{'═' * ips_width}╣",
+        f"║{'#':^{num_width}}║{'DOMAIN':^{domain_width}}║{'IPS':^{ips_width}}║",
+        f"╠{'═' * num_width}╬{'═' * domain_width}╬{'═' * ips_width}╣",
+    ]
     for index, domain in enumerate(group_domains, start=1):
         ips = ", ".join(dict.fromkeys(subdomains_per_ip[domain]))
-        print_colored(f"{pad}║{index:^{num_width}}║{domain:^{domain_width}}║{ips:^{ips_width}}║", Colors.WHITE)
-    print_colored(f"{pad}╚{'═' * num_width}╩{'═' * domain_width}╩{'═' * ips_width}╝", Colors.CYAN)
+        lines.append(f"║{index:^{num_width}}║{domain:^{domain_width}}║{ips:^{ips_width}}║")
+    lines.append(f"╚{'═' * num_width}╩{'═' * domain_width}╩{'═' * ips_width}╝")
+    return lines
+
+
+def save_domains_table_file(lines):
+    """Saves the table in RESULTS/ (outside the domain folders, so the pruning does not touch it)."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.path.join(script_dir, "RESULTS")
+    os.makedirs(base_dir, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
+    file_path = os.path.join(base_dir, f"shared_ip_domains_{stamp}.txt")
+    with open(file_path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+    return file_path
+
+
+def print_domains_table(group_domains, subdomains_per_ip):
+    """Prints every domain of the group with its IPs, in the same style as Table 2.
+
+    For large groups (DOMAINS_TABLE_FILE_THRESHOLD or more) the table is saved to a
+    file in RESULTS/ and its path is shown instead of printing every row.
+    """
+    lines = build_domains_table_lines(group_domains, subdomains_per_ip)
+    width_total = len(lines[1]) - 2
+    pad = " " * max(0, (get_terminal_width() - width_total - 2) // 2)
+
+    if len(group_domains) >= DOMAINS_TABLE_FILE_THRESHOLD:
+        file_path = save_domains_table_file(lines)
+        print_colored(f"\n[+] {len(group_domains)} domains: the full table was saved to:", Colors.GREEN)
+        print_colored(f"    {file_path}", Colors.WHITE)
+        return
+
+    print_colored(f"\n{pad}{lines[0]}", Colors.CYAN)
+    print_colored(f"{pad}{lines[1]}", Colors.BOLD + Colors.WHITE)
+    print_colored(f"{pad}{lines[2]}", Colors.CYAN)
+    print_colored(f"{pad}{lines[3]}", Colors.BOLD + Colors.YELLOW)
+    print_colored(f"{pad}{lines[4]}", Colors.CYAN)
+    for row in lines[5:-1]:
+        print_colored(f"{pad}{row}", Colors.WHITE)
+    print_colored(f"{pad}{lines[-1]}", Colors.CYAN)
 
 
 def select_ip_scope_interactive(group_domains, subdomains_per_ip):
