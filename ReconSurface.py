@@ -3948,19 +3948,13 @@ def select_ip_scope_interactive(group_domains, subdomains_per_ip):
         signal.signal(signal.SIGINT, _handler_previo)
 
 
-def run_scan_ports(subdomains_per_ip, sudo_password, ports="-p-", out_dir=None):
-    """Runs nmap once per unique IP and assigns the results to every domain that resolves to it.
+def choose_scan_targets(subdomains_per_ip):
+    """Asks which IPs to scan for each domain (one question per group of domains that share IPs).
 
-    Domains that share an IP are grouped so that the IP is scanned only once. The
-    accumulated rows are then copied to each associated domain, so every domain
-    shows the full set of open ports of its IP. Domains without a known IP are
-    scanned by name, as before.
-
-    If out_dir is provided, saves the raw Nmap output for the target for diagnostics.
+    Returns:
+        dict: {domain: [ip, ...]} with the IPs selected for each domain.
+        None: if the user cancels with CONTROL-C.
     """
-    results = []
-
-    # One IP question per group of domains that share IPs
     selected_ips = {domain: list(dict.fromkeys(ips)) or [domain] for domain, ips in subdomains_per_ip.items()}
     for group_domains in group_domains_by_shared_ips(subdomains_per_ip):
         choice = select_ip_scope_interactive(group_domains, subdomains_per_ip)
@@ -3971,6 +3965,20 @@ def run_scan_ports(subdomains_per_ip, sudo_password, ports="-p-", out_dir=None):
             for domain in group_domains:
                 ips = selected_ips[domain]
                 selected_ips[domain] = [common_ip] if common_ip in ips else ips[:1]
+    return selected_ips
+
+
+def run_scan_ports(selected_ips, sudo_password, ports="-p-", out_dir=None):
+    """Runs nmap once per unique IP and assigns the results to every domain that resolves to it.
+
+    selected_ips is {domain: [ip, ...]} as returned by choose_scan_targets(). Domains
+    that share an IP are grouped so that the IP is scanned only once. The rows are
+    then copied to each associated domain, so every domain shows the full set of
+    open ports of its IP.
+
+    If out_dir is provided, saves the raw Nmap output for the target for diagnostics.
+    """
+    results = []
 
     # Group domains by IP: {scan_target: [domain, ...]}
     scan_groups = {}
@@ -4524,6 +4532,11 @@ def run_flow_scan_ports(domain, subdomains_per_ip, ports_scan="-p-"):
         - The delays of wait are interruptible (intervalos of 0.1s).
         - exports Table 2 (results nmap) but Not Table 1 (that is exports before of call is function).
     """
+    # Choose the IPs to scan before sudo and before creating any output folder
+    selected_ips = choose_scan_targets(subdomains_per_ip)
+    if selected_ips is None:
+        return "abort"  # User cancelled the IP selection
+
     # request password of sudo with 3 attempts (CONTROL-C during getpass: returns to the menu)
     sudo_password = None
     attempts_remaining = 3
@@ -4534,7 +4547,7 @@ def run_flow_scan_ports(domain, subdomains_per_ip, ports_scan="-p-"):
             # CONTROL-C during getpass: use handler for default for that KeyboardInterrupt is propagate
             # (the handler custom intercepta SIGINT and exits; here we want return to the menu)
             import signal
-            _handler_previo = signal.signal(signal.SIGINT, signal.SIG_DFL)
+            _handler_previo = signal.signal(signal.SIGINT, signal.default_int_handler)
             try:
                 sudo_password = getpass.getpass(prompt=f"{RGB_BLUE}[sudo] {Colors.WHITE}Password: ")
             except KeyboardInterrupt:
@@ -4620,9 +4633,7 @@ def run_flow_scan_ports(domain, subdomains_per_ip, ports_scan="-p-"):
     print_colored(f"\n[+] Output folder: {out_dir}", Colors.GREEN)
 
     # Run scan of ports with nmap and live progress (saving raw)
-    results_nmap = run_scan_ports(subdomains_per_ip, sudo_password, ports_scan, out_dir)
-    if results_nmap is None:
-        return "abort"  # User cancelled the IP selection
+    results_nmap = run_scan_ports(selected_ips, sudo_password, ports_scan, out_dir)
 
     # out_dir already was created arriba
     session_tag = os.path.basename(out_dir)
@@ -5097,7 +5108,7 @@ def menu():
         print(f"{RGB_GREEN}{' ' * margin}╚{'═' * menu_width}╝{RESET_COLOR}")
         
         import signal
-        _handler_previo = signal.signal(signal.SIGINT, signal.SIG_DFL)
+        _handler_previo = signal.signal(signal.SIGINT, signal.default_int_handler)
         try:
             option = input(f"\n{RGB_BLUE}[?] {Colors.WHITE}Select an option {RGB_YELLOW}(1-3 or Q){Colors.WHITE}: ").strip()
         except KeyboardInterrupt:
@@ -5113,7 +5124,7 @@ def menu():
             max_attempts = 3
             
             while attempts < max_attempts:
-                _handler_previo = signal.signal(signal.SIGINT, signal.SIG_DFL)
+                _handler_previo = signal.signal(signal.SIGINT, signal.default_int_handler)
                 try:
                     domain = input(f"\n{RGB_BLUE}[?] {Colors.WHITE}Enter the domain to analyze: ").strip()
                 except KeyboardInterrupt:
@@ -5149,7 +5160,7 @@ def menu():
             max_attempts = 3
             
             while attempts < max_attempts:
-                _handler_previo = signal.signal(signal.SIGINT, signal.SIG_DFL)
+                _handler_previo = signal.signal(signal.SIGINT, signal.default_int_handler)
                 try:
                     domain = input(f"\n{RGB_BLUE}[?] {Colors.WHITE}Enter the domain to analyze with ports: ").strip()
                 except KeyboardInterrupt:
@@ -5195,7 +5206,7 @@ def menu():
             max_attempts = 3
             
             while attempts < max_attempts:
-                _handler_previo = signal.signal(signal.SIGINT, signal.SIG_DFL)
+                _handler_previo = signal.signal(signal.SIGINT, signal.default_int_handler)
                 try:
                     user_input = input(f"\n{RGB_BLUE}[?] {Colors.WHITE}Enter the URL or site to analyze with ports: ").strip()
                 except KeyboardInterrupt:
@@ -5322,7 +5333,7 @@ def main():
     
     def signal_handler(signum, frame):
         """handles CONTROL-C (SIGINT). Restores the terminal before exiting to avoid it being blocked.
-        note: During getpass (sudo), SIG_DFL is used temporarily so that KeyboardInterrupt
+        note: During getpass (sudo) and menu inputs, default_int_handler is used temporarily so that KeyboardInterrupt
         allows returning to the menu instead of exiting."""
         if signum == signal.SIGINT:  # Only CONTROL-C
             # End process nmap if is in execution (start_new_session lo isolates, there is that kill it explicitly)
