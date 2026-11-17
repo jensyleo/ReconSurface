@@ -13,6 +13,9 @@ All notable changes to this project will be documented in this file.
 - Each unique IP is scanned once; its results are copied to every domain that resolves to it
 - The IP selection happens before the sudo prompt and before the output folder is created
 
+### Changed
+- Security policy moved from `SECURITY.md` into the README, and the shell injection issue in DNS lookups is documented as a known limitation
+
 ### Fixed
 - CONTROL-C did not work in the IP menu and other inputs: the global handler exited the program. Inputs now raise `KeyboardInterrupt` and return to the menu
 - A cancelled IP selection now returns to the main menu without creating a folder
