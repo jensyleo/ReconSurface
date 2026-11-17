@@ -3876,6 +3876,33 @@ def most_shared_ip(group_domains, subdomains_per_ip):
     return max(counts, key=lambda ip: counts[ip])
 
 
+def print_shared_ip_table(group_domains, subdomains_per_ip, common_ip):
+    """Prints the table of IPs shared by a group of domains, in the same style as Table 2."""
+    union_ips = list(dict.fromkeys(ip for d in group_domains for ip in subdomains_per_ip[d]))
+    total = len(group_domains)
+    title = "SHARED IP GROUP"
+    cols = [("IP", 18), ("DOMAINS", 10), ("SHARE", 10), ("ROLE", 16)]
+    width_total = sum(w for _, w in cols) + len(cols) - 1
+    pad = " " * max(0, (get_terminal_width() - width_total - 2) // 2)
+
+    print_colored(f"\n{pad}{'═' * (width_total + 2)}", Colors.CYAN)
+    print_colored(f"{pad}║{title:^{width_total}}║", Colors.BOLD + Colors.WHITE)
+    print_colored(f"{pad}╠{'╦'.join('═' * w for _, w in cols)}╣", Colors.CYAN)
+    header = "║".join(f"{name:^{w}}" for name, w in cols)
+    print_colored(f"{pad}║{header}║", Colors.BOLD + Colors.YELLOW)
+    print_colored(f"{pad}╠{'╬'.join('═' * w for _, w in cols)}╣", Colors.CYAN)
+    for ip in union_ips:
+        count = sum(1 for d in group_domains if ip in subdomains_per_ip[d])
+        share = f"{round(count * 100 / total)}%"
+        is_common = ip == common_ip
+        role = "MOST SHARED" if is_common else "shared"
+        color = Colors.GREEN if is_common else Colors.WHITE
+        cells = [f"{ip:^{cols[0][1]}}", f"{count:^{cols[1][1]}}", f"{share:^{cols[2][1]}}", f"{role:^{cols[3][1]}}"]
+        print_colored(f"{pad}║" + "║".join(cells) + "║", color)
+    print_colored(f"{pad}╚{'╩'.join('═' * w for _, w in cols)}╝", Colors.CYAN)
+    print_colored(f"{pad}Domains: {summarize_domains(group_domains)}", Colors.WHITE)
+
+
 def select_ip_scope_interactive(group_domains, subdomains_per_ip):
     """Submenu to choose which IPs are scanned for a group of domains that share IPs.
 
@@ -3889,11 +3916,8 @@ def select_ip_scope_interactive(group_domains, subdomains_per_ip):
     """
     union_ips = list(dict.fromkeys(ip for d in group_domains for ip in subdomains_per_ip[d]))
     common_ip = most_shared_ip(group_domains, subdomains_per_ip)
-    shared_count = sum(1 for d in group_domains if common_ip in subdomains_per_ip[d])
 
-    print_colored(f"\n[*] {len(group_domains)} domains share IPs: {', '.join(union_ips)}", Colors.YELLOW)
-    print_colored(f"    {summarize_domains(group_domains)}", Colors.WHITE)
-    print_colored(f"    Most shared IP: {common_ip} ({shared_count}/{len(group_domains)} domains)", Colors.WHITE)
+    print_shared_ip_table(group_domains, subdomains_per_ip, common_ip)
 
     terminal_width = get_terminal_width()
     menu_width = 52
