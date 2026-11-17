@@ -170,20 +170,15 @@ Nmap scan progress is tracked across 5 phases, each independently going from 0% 
 
 - **Port scan progress can sit at 95% for a while** during the `-sS` phase before Nmap reports "Completed SYN Stealth Scan" and the progress jumps to 100%.
 - **Port retest** is not implemented — a confirmation re-scan of detected open ports would improve result confidence.
-- **Shell injection in DNS lookups** (`dig`/`nslookup` with `shell=True`) must be replaced by argument lists. See [Security](#security).
 - **Additional OSINT sources** are documented but not implemented: Google dorking (aggressive anti-bot protection makes it low value relative to the 14 sources already covered) and sources requiring a paid/registered API key (SecurityTrails, Shodan, Censys, VirusTotal, URLScan, OTX/AlienVault, Hunter.io, IntelX, Spyse, BufferOverrun, SubdomainfinderC99).
 
 ## Security
 
 ReconSurface is a local command-line tool. It does not listen on any port: it only makes outbound queries (DNS, WHOIS, HTTP, OSINT sources) and optionally runs Nmap. Use it only against domains and hosts you own or are explicitly authorized to test.
 
-### Known issue: shell injection in DNS lookups
-
-Some DNS helpers (`dig` and `nslookup`) build command strings and run them with `shell=True`. The domain is inserted directly, and some names come from DNS responses, which are untrusted. A crafted DNS record could inject shell commands on the machine running the scan. Until this is fixed, only scan targets whose DNS records you trust.
-
 ### Other practices and limits
 
-- **Nmap** runs through `subprocess` with an argument list, not a shell string. The sudo password is passed on stdin and is never stored.
+- **Nmap** and the DNS lookups (`dig`, `nslookup`) run through `subprocess` with argument lists, never through a shell, so names from DNS responses cannot inject commands. The sudo password is passed on stdin and is never stored.
 - **Exports** (CSV, JSON, XML, Excel) contain third-party data. Values are written as text, but spreadsheet formulas are not escaped. Open exports from untrusted targets with formula evaluation disabled.
 - **Not protected:** malicious OSINT responses (sources are not authenticated), the security of the installed Nmap binary, and resistance to responses designed to exhaust memory or time.
 

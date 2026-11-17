@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - Security policy moved from `SECURITY.md` into the README, and the shell injection issue in DNS lookups is documented as a known limitation
 
 ### Fixed
+- Shell injection in DNS lookups: `dig` and `nslookup` now run with argument lists instead of `shell=True`, so names from DNS responses cannot run commands
 - CONTROL-C did not work in the IP menu and other inputs: the global handler exited the program. Inputs now raise `KeyboardInterrupt` and return to the menu
 - A cancelled IP selection now returns to the main menu without creating a folder
 

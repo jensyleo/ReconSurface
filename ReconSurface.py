@@ -1280,45 +1280,45 @@ def verify_dns_existence(domain):
     """
     try:
         # 1) A
-        cmd = f"dig +short A {domain}"
-        result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
+        cmd = ["dig", "+short", "A", domain]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
         if result.returncode == 0 and result.stdout.strip():
             return True
 
         # 2) AAAA
-        cmd = f"dig +short AAAA {domain}"
-        result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
+        cmd = ["dig", "+short", "AAAA", domain]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
         if result.returncode == 0 and result.stdout.strip():
             return True
 
         # 3) CNAME (and resolve its destination)
-        cmd = f"dig +short CNAME {domain}"
-        result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
+        cmd = ["dig", "+short", "CNAME", domain]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
         cname = result.stdout.strip()
         if result.returncode == 0 and cname:
             # If there is a CNAME, consider it existing even if it does not resolve A at this moment
             # Additionally try A/AAAA from the CNAME
-            cmd_a = f"dig +short A {cname}"
-            res_a = subprocess.run(cmd_a, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
+            cmd_a = ["dig", "+short", "A", cname]
+            res_a = subprocess.run(cmd_a, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
             if res_a.returncode == 0 and res_a.stdout.strip():
                 return True
-            cmd_aaaa = f"dig +short AAAA {cname}"
-            res_aaaa = subprocess.run(cmd_aaaa, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
+            cmd_aaaa = ["dig", "+short", "AAAA", cname]
+            res_aaaa = subprocess.run(cmd_aaaa, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
             if res_aaaa.returncode == 0 and res_aaaa.stdout.strip():
                 return True
             # Otherwise, still consider it existing because of the CNAME
             return True
 
         # Fallback with nslookup (A and AAAA)
-        cmd = f"nslookup -type=A {domain}"
-        result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
+        cmd = ["nslookup", "-type=A", domain]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
         if result.returncode == 0 and result.stdout.strip():
             output = result.stdout.lower()
             if "can't find" not in output and "not found" not in output and "nxdomain" not in output:
                 return True
 
-        cmd = f"nslookup -type=AAAA {domain}"
-        result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
+        cmd = ["nslookup", "-type=AAAA", domain]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
         if result.returncode == 0 and result.stdout.strip():
             output = result.stdout.lower()
             if "can't find" not in output and "not found" not in output and "nxdomain" not in output:
@@ -1334,8 +1334,8 @@ def resolve_dns_record_command(domain, type_record):
     """Resuelve a type specific of record DNS using commands from the system"""
     try:
         # try with dig first
-        cmd = f"dig +short {type_record} {domain}"
-        result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
+        cmd = ["dig", "+short", type_record, domain]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
         
         if result.returncode == 0 and result.stdout.strip():
             records = [line.strip() for line in result.stdout.strip().split('\n') if line.strip()]
@@ -1348,8 +1348,8 @@ def resolve_dns_record_command(domain, type_record):
                     if not record.replace('.', '').replace('-', '').isdigit() and not record.replace('.', '').isdigit():
                         # Is a CNAME, resolve its IP
                         try:
-                            cmd_ip = f"dig +short A {record}"
-                            result_ip = subprocess.run(cmd_ip, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+                            cmd_ip = ["dig", "+short", "A", record]
+                            result_ip = subprocess.run(cmd_ip, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
                             if result_ip.returncode == 0 and result_ip.stdout.strip():
                                 ips_cname = [ip.strip() for ip in result_ip.stdout.strip().split('\n') if ip.strip()]
                                 ips_actual.extend(ips_cname)
@@ -1368,8 +1368,8 @@ def resolve_dns_record_command(domain, type_record):
             return records
         
         # If dig fails, try with nslookup
-        cmd = f"nslookup -type={type_record} {domain}"
-        result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
+        cmd = ["nslookup", f"-type={type_record}", domain]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
         
         if result.returncode == 0 and result.stdout.strip():
             # parse nslookup output
@@ -1388,8 +1388,8 @@ def resolve_dns_record_command(domain, type_record):
                 for record in records:
                     if not record.replace('.', '').replace('-', '').isdigit() and not record.replace('.', '').isdigit():
                         try:
-                            cmd_ip = f"dig +short A {record}"
-                            result_ip = subprocess.run(cmd_ip, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+                            cmd_ip = ["dig", "+short", "A", record]
+                            result_ip = subprocess.run(cmd_ip, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
                             if result_ip.returncode == 0 and result_ip.stdout.strip():
                                 ips_cname = [ip.strip() for ip in result_ip.stdout.strip().split('\n') if ip.strip()]
                                 ips_actual.extend(ips_cname)
