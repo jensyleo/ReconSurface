@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
-- IP selection submenu when a domain resolves to several IPs: scan the first IP found or all of them
+- IP selection submenu, asked once per group of domains that share IPs: scan the first IP of each domain or all of them
 
 ### Changed
 - Each unique IP is scanned once; its results are copied to every domain that resolves to it

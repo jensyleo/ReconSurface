@@ -3840,18 +3840,40 @@ def parse_nmap_xml(xml_file, target_original=None):
         print_colored(f"[!] Error parsing XML: {str(e)}", Colors.RED)
         return []
 
-def select_ip_scope_interactive(domain, ips):
-    """Submenu to choose which IPs of a domain are scanned when it resolves to several.
-
-    Options:
-        1. Scan the first IP found
-        2. Scan all the IPs
+def group_domains_by_shared_ips(subdomains_per_ip):
+    """Groups the domains that have several IPs and share at least one of them.
 
     Returns:
-        list: IPs to scan (one or all of the received IPs).
+        list: one list of domains per group. Each group gets a single IP question.
+    """
+    groups = []
+    for domain, ips in subdomains_per_ip.items():
+        domain_ips = set(ips)
+        if len(domain_ips) <= 1:
+            continue
+        merged = {'domains': [domain], 'ips': set(domain_ips)}
+        for group in [g for g in groups if g['ips'] & domain_ips]:
+            merged['domains'] += group['domains']
+            merged['ips'] |= group['ips']
+            groups.remove(group)
+        groups.append(merged)
+    return [group['domains'] for group in groups]
+
+
+def select_ip_scope_interactive(group_domains, subdomains_per_ip):
+    """Submenu to choose which IPs are scanned for a group of domains that share IPs.
+
+    Options:
+        1. Scan the first IP of each domain
+        2. Scan all the IPs of each domain
+
+    Returns:
+        str: 'first' or 'all'.
         None: if the user cancels with CONTROL-C.
     """
-    print_colored(f"\n[*] {domain} resolves to {len(ips)} IPs: {', '.join(ips)}", Colors.YELLOW)
+    print_colored(f"\n[*] {len(group_domains)} domains with several IPs, some shared:", Colors.YELLOW)
+    for domain in group_domains:
+        print_colored(f"    {domain} -> {', '.join(dict.fromkeys(subdomains_per_ip[domain]))}", Colors.WHITE)
 
     terminal_width = get_terminal_width()
     menu_width = 52
@@ -3860,21 +3882,22 @@ def select_ip_scope_interactive(domain, ips):
     print(f"\n{RGB_GREEN}{' ' * margin}╔{'═' * menu_width}╗{RESET_COLOR}")
     print(f"{RGB_GREEN}{' ' * margin}║{RGB_BLUE}{'IPS TO SCAN':^52}{RGB_GREEN}║{RESET_COLOR}")
     print(f"{RGB_GREEN}{' ' * margin}╠{'═' * menu_width}╣{RESET_COLOR}")
-    print(f"{RGB_GREEN}{' ' * margin}║ {RGB_YELLOW}[1]{RGB_BLUE} 🎯 {Colors.WHITE}{pad_menu_line(f'Scan the first IP found ({ips[0]})', menu_width - 8)}{RGB_GREEN}║{RESET_COLOR}")
-    print(f"{RGB_GREEN}{' ' * margin}║ {RGB_YELLOW}[2]{RGB_BLUE} 🌐 {Colors.WHITE}{pad_menu_line(f'Scan all the IPs ({len(ips)})', menu_width - 8)}{RGB_GREEN}║{RESET_COLOR}")
+    print(f"{RGB_GREEN}{' ' * margin}║ {RGB_YELLOW}[1]{RGB_BLUE} 🎯 {Colors.WHITE}{pad_menu_line('Scan the first IP of each domain', menu_width - 8)}{RGB_GREEN}║{RESET_COLOR}")
+    print(f"{RGB_GREEN}{' ' * margin}║ {RGB_YELLOW}[2]{RGB_BLUE} 🌐 {Colors.WHITE}{pad_menu_line('Scan all the IPs of each domain', menu_width - 8)}{RGB_GREEN}║{RESET_COLOR}")
     print(f"{RGB_GREEN}{' ' * margin}╚{'═' * menu_width}╝{RESET_COLOR}")
 
     while True:
         try:
             option_ip = input(f"\n{RGB_BLUE}[?] {Colors.WHITE}Select an option {RGB_YELLOW}(1-2){Colors.WHITE}: ").strip()
             if option_ip == "1":
-                return [ips[0]]
+                return 'first'
             elif option_ip == "2":
-                return list(ips)
+                return 'all'
             print_colored(f"[-] Enter 1 or 2", Colors.RED)
         except KeyboardInterrupt:
             print_colored(f"\n[*] Scan cancelled for the user", Colors.RED)
             return None
+
 
 def run_scan_ports(subdomains_per_ip, sudo_password, ports="-p-", out_dir=None):
     """Runs nmap once per unique IP and assigns the results to every domain that resolves to it.
@@ -3888,15 +3911,15 @@ def run_scan_ports(subdomains_per_ip, sudo_password, ports="-p-", out_dir=None):
     """
     results = []
 
-    # Domains with several IPs: ask which of them to scan
-    selected_ips = {}
-    for domain, ips in subdomains_per_ip.items():
-        unique_ips = list(dict.fromkeys(ips))
-        if len(unique_ips) > 1:
-            unique_ips = select_ip_scope_interactive(domain, unique_ips)
-            if unique_ips is None:
-                return results
-        selected_ips[domain] = unique_ips or [domain]
+    # One IP question per group of domains that share IPs
+    selected_ips = {domain: list(dict.fromkeys(ips)) or [domain] for domain, ips in subdomains_per_ip.items()}
+    for group_domains in group_domains_by_shared_ips(subdomains_per_ip):
+        choice = select_ip_scope_interactive(group_domains, subdomains_per_ip)
+        if choice is None:
+            return results
+        if choice == 'first':
+            for domain in group_domains:
+                selected_ips[domain] = selected_ips[domain][:1]
 
     # Group domains by IP: {scan_target: [domain, ...]}
     scan_groups = {}
