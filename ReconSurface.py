@@ -3860,20 +3860,40 @@ def group_domains_by_shared_ips(subdomains_per_ip):
     return [group['domains'] for group in groups]
 
 
+def summarize_domains(domains, limit=3):
+    """Short text of a list of domains: the first ones plus a count of the rest."""
+    if len(domains) <= limit:
+        return ', '.join(domains)
+    return f"{', '.join(domains[:limit])} ... and {len(domains) - limit} more"
+
+
+def most_shared_ip(group_domains, subdomains_per_ip):
+    """IP used by the most domains of the group (first appearance wins a tie)."""
+    counts = {}
+    for domain in group_domains:
+        for ip in dict.fromkeys(subdomains_per_ip[domain]):
+            counts[ip] = counts.get(ip, 0) + 1
+    return max(counts, key=lambda ip: counts[ip])
+
+
 def select_ip_scope_interactive(group_domains, subdomains_per_ip):
     """Submenu to choose which IPs are scanned for a group of domains that share IPs.
 
     Options:
-        1. Scan the first IP of each domain
-        2. Scan all the IPs of each domain
+        1. Scan only the most shared IP of the group
+        2. Scan all the IPs of the group
 
     Returns:
-        str: 'first' or 'all'.
+        str: 'common' or 'all'.
         None: if the user cancels with CONTROL-C.
     """
-    print_colored(f"\n[*] {len(group_domains)} domains with several IPs, some shared:", Colors.YELLOW)
-    for domain in group_domains:
-        print_colored(f"    {domain} -> {', '.join(dict.fromkeys(subdomains_per_ip[domain]))}", Colors.WHITE)
+    union_ips = list(dict.fromkeys(ip for d in group_domains for ip in subdomains_per_ip[d]))
+    common_ip = most_shared_ip(group_domains, subdomains_per_ip)
+    shared_count = sum(1 for d in group_domains if common_ip in subdomains_per_ip[d])
+
+    print_colored(f"\n[*] {len(group_domains)} domains share IPs: {', '.join(union_ips)}", Colors.YELLOW)
+    print_colored(f"    {summarize_domains(group_domains)}", Colors.WHITE)
+    print_colored(f"    Most shared IP: {common_ip} ({shared_count}/{len(group_domains)} domains)", Colors.WHITE)
 
     terminal_width = get_terminal_width()
     menu_width = 52
@@ -3882,15 +3902,15 @@ def select_ip_scope_interactive(group_domains, subdomains_per_ip):
     print(f"\n{RGB_GREEN}{' ' * margin}╔{'═' * menu_width}╗{RESET_COLOR}")
     print(f"{RGB_GREEN}{' ' * margin}║{RGB_BLUE}{'IPS TO SCAN':^52}{RGB_GREEN}║{RESET_COLOR}")
     print(f"{RGB_GREEN}{' ' * margin}╠{'═' * menu_width}╣{RESET_COLOR}")
-    print(f"{RGB_GREEN}{' ' * margin}║ {RGB_YELLOW}[1]{RGB_BLUE} 🎯 {Colors.WHITE}{pad_menu_line('Scan the first IP of each domain', menu_width - 8)}{RGB_GREEN}║{RESET_COLOR}")
-    print(f"{RGB_GREEN}{' ' * margin}║ {RGB_YELLOW}[2]{RGB_BLUE} 🌐 {Colors.WHITE}{pad_menu_line('Scan all the IPs of each domain', menu_width - 8)}{RGB_GREEN}║{RESET_COLOR}")
+    print(f"{RGB_GREEN}{' ' * margin}║ {RGB_YELLOW}[1]{RGB_BLUE} 🎯 {Colors.WHITE}{pad_menu_line(f'Only the common IP ({common_ip})', menu_width - 8)}{RGB_GREEN}║{RESET_COLOR}")
+    print(f"{RGB_GREEN}{' ' * margin}║ {RGB_YELLOW}[2]{RGB_BLUE} 🌐 {Colors.WHITE}{pad_menu_line(f'All the IPs of the group ({len(union_ips)})', menu_width - 8)}{RGB_GREEN}║{RESET_COLOR}")
     print(f"{RGB_GREEN}{' ' * margin}╚{'═' * menu_width}╝{RESET_COLOR}")
 
     while True:
         try:
             option_ip = input(f"\n{RGB_BLUE}[?] {Colors.WHITE}Select an option {RGB_YELLOW}(1-2){Colors.WHITE}: ").strip()
             if option_ip == "1":
-                return 'first'
+                return 'common'
             elif option_ip == "2":
                 return 'all'
             print_colored(f"[-] Enter 1 or 2", Colors.RED)
@@ -3917,9 +3937,11 @@ def run_scan_ports(subdomains_per_ip, sudo_password, ports="-p-", out_dir=None):
         choice = select_ip_scope_interactive(group_domains, subdomains_per_ip)
         if choice is None:
             return results
-        if choice == 'first':
+        if choice == 'common':
+            common_ip = most_shared_ip(group_domains, subdomains_per_ip)
             for domain in group_domains:
-                selected_ips[domain] = selected_ips[domain][:1]
+                ips = selected_ips[domain]
+                selected_ips[domain] = [common_ip] if common_ip in ips else ips[:1]
 
     # Group domains by IP: {scan_target: [domain, ...]}
     scan_groups = {}
@@ -3928,7 +3950,7 @@ def run_scan_ports(subdomains_per_ip, sudo_password, ports="-p-", out_dir=None):
             scan_groups.setdefault(scan_target, []).append(domain)
 
     for scan_target, domains in scan_groups.items():
-        shared_text = f" (shared by: {', '.join(domains)})" if len(domains) > 1 else ""
+        shared_text = f" (shared by {len(domains)} domains)" if len(domains) > 1 else ""
         print_colored(f"\n[*] Starting scan of ports for: {scan_target}{shared_text}", Colors.BLUE)
         xml_file = run_nmap_stream(scan_target, sudo_password, ports, out_dir)
 
