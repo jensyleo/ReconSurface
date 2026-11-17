@@ -5,10 +5,17 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
-- IP selection submenu, asked once per group of domains that share IPs: scan the first IP of each domain or all of them
+- IP selection menu, asked once per group of domains that share IPs: scan only the most shared IP or all IPs of the group
+- Colored table of the shared IPs of a group, with the share of domains per IP
+- Full table of the group's domains; groups of 200 or more domains are saved to `RESULTS/` and the file path is shown
 
 ### Changed
 - Each unique IP is scanned once; its results are copied to every domain that resolves to it
+- The IP selection happens before the sudo prompt and before the output folder is created
+
+### Fixed
+- CONTROL-C did not work in the IP menu and other inputs: the global handler exited the program. Inputs now raise `KeyboardInterrupt` and return to the menu
+- A cancelled IP selection now returns to the main menu without creating a folder
 
 ## [2.8] - 2025-07-16
 
