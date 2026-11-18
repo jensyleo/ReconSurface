@@ -16,7 +16,7 @@ Current version: v2.8
 - CDN detection: domains served through Amazon CloudFront, Cloudflare, Akamai, Fastly and similar (by CNAME, reverse DNS, Cloudflare's published ranges or HTTP response headers) are reported as a finding. Before a port scan, the program asks whether to skip them (recommended) or scan them anyway, because their IPs belong to the provider's edge servers, not to the target. Skipped domains stay in the results table as `Skipped (CDN)`
 - Findings table: wildcard DNS, CDN providers and IPs shared by several names (shared hosting) are reported on screen and exported as `*_findings.csv/json`, plus `*_wildcard_matches.csv/json` and one Excel sheet each
 - Nmap port scanning with 5 modes: single port, range, group, mixed, or all ports (`-p-`)
-- Real-time progress bar with automatic timing calibration across 5 scan phases. The percentage is an estimate: if Nmap prints nothing for 10 minutes, the bar shows `[nmap silent MM:SS]`
+- Real-time progress bar with automatic timing calibration across 5 scan phases. Nmap is asked for a status every 15 seconds. If it prints nothing for 2 minutes it is stalled: the bar stops showing the estimated percentage and shows `no Nmap progress for MM:SS - press S to skip`. Pressing S ends that target and continues with the next one, which stays in the results as `Skipped (stalled)`
 - Robust CONTROL-C handling at any point during execution (sudo prompt, scanning, OSINT queries, menu input)
 - Open and closed ports both included in results and exports
 - Full export to CSV, JSON, XML, and a consolidated Excel workbook
@@ -172,6 +172,7 @@ Nmap scan progress is tracked across 5 phases, each independently going from 0% 
 ## Known limitations / roadmap
 
 - **Port scan progress can sit at 95% for a while** during the `-sS` phase before Nmap reports "Completed SYN Stealth Scan" and the progress jumps to 100%.
+- **Nmap can stall on macOS.** It was observed blocked inside the kernel while sending a packet (`sendto`), with a network filter extension installed, and it never recovered; the cause is not confirmed. The program detects the silence and lets you skip the target with S, but it cannot unblock Nmap itself.
 - **Port retest** is not implemented — a confirmation re-scan of detected open ports would improve result confidence.
 - **Additional OSINT sources** are documented but not implemented: Google dorking (aggressive anti-bot protection makes it low value relative to the 14 sources already covered) and sources requiring a paid/registered API key (SecurityTrails, Shodan, Censys, VirusTotal, URLScan, OTX/AlienVault, Hunter.io, IntelX, Spyse, BufferOverrun, SubdomainfinderC99).
 

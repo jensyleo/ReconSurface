@@ -65,6 +65,7 @@ import os
 import sys
 import shutil
 import requests
+import select
 import socket
 import subprocess
 import re
@@ -2949,7 +2950,21 @@ def _kill_nmap_process_group(process, timeout=2.0):
         except Exception:
             pass
 
-NMAP_SILENCE_WARN_SECONDS = 600  # Show a warning in the progress bar when nmap prints nothing for this long
+# nmap prints a status line every NMAP_STATS_EVERY seconds, so a longer silence means it is stalled
+# (for example blocked inside the kernel while sending a packet)
+NMAP_STATS_EVERY = "15s"
+NMAP_SILENCE_WARN_SECONDS = 120
+NMAP_SKIPPED = "__nmap_skipped__"  # run_nmap_stream() returns this when the user skipped a stalled target
+
+
+def _read_key_nonblocking():
+    """Returns the key pressed, or '' if none. The terminal is in raw mode while the progress bar runs."""
+    try:
+        if select.select([sys.stdin], [], [], 0)[0]:
+            return os.read(sys.stdin.fileno(), 1).decode(errors="ignore")
+    except Exception:
+        pass
+    return ""
 
 
 def run_nmap_stream(target, sudo_password, ports="-p-", out_dir=None):
@@ -2983,7 +2998,7 @@ def run_nmap_stream(target, sudo_password, ports="-p-", out_dir=None):
         str: Path from the file XML generated.
     """
     # Command nmap with ports selected
-    cmd = ['sudo', '-S', '-k', 'nmap', '-Pn', '-sS', '-sV', '-T4', '-vvv', ports, '--max-retries', '2', '--min-rate', '1000', '--min-parallelism', '1000', '--max-parallelism', '1000', '--initial-rtt-timeout', '10s', '--min-rtt-timeout', '10s', '--max-rtt-timeout', '10s', target]
+    cmd = ['sudo', '-S', '-k', 'nmap', '-Pn', '-sS', '-sV', '-T4', '-vvv', ports, '--max-retries', '2', '--min-rate', '1000', '--min-parallelism', '1000', '--max-parallelism', '1000', '--initial-rtt-timeout', '10s', '--min-rtt-timeout', '10s', '--max-rtt-timeout', '10s', '--stats-every', NMAP_STATS_EVERY, target]
     if ':' in target:
         cmd.insert(cmd.index('nmap') + 1, '-6')  # IPv6 literal: nmap requires -6
     
@@ -3204,6 +3219,13 @@ def run_nmap_stream(target, sudo_password, ports="-p-", out_dir=None):
             i = 0
             while progress_nmap['active']:
                 try:
+                    # A silent nmap is stalled: allow skipping the target with S. Keys are always read so that
+                    # one pressed earlier is not mistaken for a skip request once the stall starts.
+                    silent_seconds = time.time() - progress_nmap['last_output_time']
+                    pressed_key = _read_key_nonblocking()
+                    if silent_seconds >= NMAP_SILENCE_WARN_SECONDS and pressed_key.lower() == 's':
+                        progress_nmap['skip_requested'] = True
+
                     # WATCHDOG: if had progress real but stopped of reach for too much time, resume calculation internal
                     if progress_nmap['progress_real_nmap_available'] and not progress_nmap['phase_scan_completed']:
                         if progress_nmap['last_timing_real'] is not None:
@@ -3540,21 +3562,21 @@ def run_nmap_stream(target, sudo_password, ports="-p-", out_dir=None):
                         elapsed = time.time() - start_time
                         elapsed_formatted = f"{int(elapsed//3600):02d}:{int((elapsed%3600)//60):02d}:{int(elapsed%60):02d}"
 
-                        # Warn when nmap has been silent for a long time: the percentage is only an estimate
-                        silent_seconds = time.time() - progress_nmap['last_output_time']
-                        silent_suffix = ""
-                        if silent_seconds >= NMAP_SILENCE_WARN_SECONDS:
-                            silent_suffix = f" [nmap silent {int(silent_seconds // 60):02d}:{int(silent_seconds % 60):02d}]"
-
                         # build message complete
-                        message = f"[*] Scanning {progress_nmap['target']}... {chars[i % len(chars)]} {percentage}% {counters}{phase_text} - {elapsed_formatted}{silent_suffix}"
+                        message = f"[*] Scanning {progress_nmap['target']}... {chars[i % len(chars)]} {percentage}% {counters}{phase_text} - {elapsed_formatted}"
                         # limit width from the message a 80 characters max for avoid wrap from the terminal
                         if len(message) > 80:
                             # truncate the message keeping information essential
                             target_short = progress_nmap['target'][:15] if len(progress_nmap['target']) > 15 else progress_nmap['target']
-                            message = f"[*] {target_short}... {chars[i % len(chars)]} {percentage}% {counters} - {elapsed_formatted}{silent_suffix}"
+                            message = f"[*] {target_short}... {chars[i % len(chars)]} {percentage}% {counters} - {elapsed_formatted}"
                             if len(message) > 80:
                                 message = message[:77] + "..."
+
+                        # nmap went silent: the percentage is only an estimate, so do not show it
+                        if silent_seconds >= NMAP_SILENCE_WARN_SECONDS:
+                            stalled_target = progress_nmap['target'][:15]
+                            message = (f"[*] {stalled_target}... {chars[i % len(chars)]} no Nmap progress for "
+                                       f"{int(silent_seconds // 60):02d}:{int(silent_seconds % 60):02d} - {elapsed_formatted} - press S to skip")
                         # Use code ANSI for clear until the final of the line (avoids wrap)
                         sys.stdout.write(f"\r\033[K{message}")
                         sys.stdout.flush()
@@ -3604,7 +3626,13 @@ def run_nmap_stream(target, sudo_password, ports="-p-", out_dir=None):
         # IMPROVEMENT v2.0: Leer output in time real and calculate progress (with handling robust of CONTROL-C)
         # The loop main is wrapped in try-except KeyboardInterrupt for allow cancellation
         # in any moment during the reading from the output of nmap
+        skipped = False
         while process.poll() is None:
+            if progress_nmap.get('skip_requested'):
+                # The user chose to skip a stalled target: end nmap and move on
+                _kill_nmap_process_group(process)
+                skipped = True
+                break
             # Leer lines available from the output
             try:
                 # Use select for leer without block (only in Unix)
@@ -4086,6 +4114,11 @@ def run_nmap_stream(target, sudo_password, ports="-p-", out_dir=None):
         progress_nmap['active'] = False
         progress_nmap_thread.join(timeout=0.3)
         _ensure_terminal_sane()
+
+        if skipped:
+            print("\r\033[K", end="")
+            print_colored(f"[-] Scan of {target} skipped: Nmap stalled", Colors.YELLOW)
+            return NMAP_SKIPPED
         
         # Update statistics final (Tarea #24)
         tee_logger = get_tee_logger()
@@ -4454,6 +4487,7 @@ def run_scan_ports(selected_ips, sudo_password, ports="-p-", out_dir=None):
             scan_groups.setdefault(scan_target, []).append(domain)
 
     domains_with_rows = set()
+    stalled_domains = set()
     for scan_target, domains in scan_groups.items():
         if ":" in scan_target and not has_ipv6_connectivity():
             print_colored(f"\n[-] Skipping {scan_target}: this machine has no IPv6 connectivity", Colors.YELLOW)
@@ -4462,6 +4496,10 @@ def run_scan_ports(selected_ips, sudo_password, ports="-p-", out_dir=None):
         shared_text = f" (shared by {len(domains)} domains)" if len(domains) > 1 else ""
         print_colored(f"\n[*] Starting scan of ports for: {scan_target}{shared_text}", Colors.BLUE)
         xml_file = run_nmap_stream(scan_target, sudo_password, ports, out_dir)
+
+        if xml_file == NMAP_SKIPPED:
+            stalled_domains.update(domains)
+            continue
 
         # parse from XML if is available
         if xml_file and os.path.exists(xml_file):
@@ -4489,15 +4527,17 @@ def run_scan_ports(selected_ips, sudo_password, ports="-p-", out_dir=None):
             else:
                 print_colored(f"[-] No open ports detected for {domain} ({scan_target})", Colors.YELLOW)
 
-    # A domain that ended without any port rows gets one 'without detection' row so it appears in the table
+    # A domain that ended without any port rows gets one row so it appears in the table:
+    # 'Skipped (stalled)' if its scan was skipped, otherwise 'Without DETECTION'
     for domain in selected_ips:
         if domain not in domains_with_rows:
+            text = 'Skipped (stalled)' if domain in stalled_domains and domain not in domains_with_rows else 'Without DETECTION'
             results.append({
                 'target': domain,
                 'target_original': domain,
-                'port': 'Without DETECTION',
-                'service': 'Without DETECTION',
-                'version': 'Without DETECTION',
+                'port': text,
+                'service': text,
+                'version': text,
                 'status': 'N/A',  # No detection - the status cannot be determined
                 'sin_detection': True
             })

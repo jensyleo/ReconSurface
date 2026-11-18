@@ -10,7 +10,7 @@ All notable changes to this project will be documented in this file.
 - CDN detection (CloudFront, Cloudflare, Akamai, Fastly and others) by CNAME, reverse DNS, Cloudflare's published ranges or HTTP response headers (`cf-ray`, `x-amz-cf-id`...), reported as a finding. The headers catch CDNs that DNS cannot reveal, such as Cloudflare in front of hosting IPs outside its published ranges. Before a port scan the program asks whether to skip the CDN domains (recommended) or scan them anyway. Skipped domains appear in the results table as `Skipped (CDN)`
 - Findings: wildcard DNS, CDN providers and IPs shared by several names are reported in a Findings table and exported (`*_findings.csv/json`, `*_wildcard_matches.csv/json`, Excel sheets)
 - Wildcard DNS detection: random names are resolved before the scan. Brute-force and pattern matches that only resolve through the wildcard are set apart from Table 1 and reported as findings, never deleted. Names confirmed by OSINT stay in the table
-- Warning `[nmap silent MM:SS]` in the progress bar when Nmap prints nothing for 10 minutes
+- Stalled Nmap detection: Nmap prints a status every 15 seconds (`--stats-every`). After 2 minutes of silence the progress bar stops showing the estimated percentage and offers `press S to skip`. A skipped target stays in the results as `Skipped (stalled)` and the scan continues with the next one
 - IPv6 scanning: IPv6 addresses are scanned with Nmap `-6`. The program announces them before scanning and skips them, with a notice, if the machine has no IPv6 connectivity
 - Full table of the group's domains; groups of 200 or more domains are saved to `RESULTS/` and the file path is shown
 
