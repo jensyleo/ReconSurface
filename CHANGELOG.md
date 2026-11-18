@@ -7,7 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 - IP selection menu, asked once per group of domains that share IPs: scan only the most shared IP or all IPs of the group
 - Colored table of the shared IPs of a group, with the share of domains per IP
-- CDN detection (CloudFront, Cloudflare, Akamai, Fastly and others) by CNAME, reverse DNS or Cloudflare's published ranges, reported as a finding. Before a port scan the program asks whether to skip the CDN domains (recommended) or scan them anyway. Skipped domains appear in the results table as `Skipped (CDN)`
+- CDN detection (CloudFront, Cloudflare, Akamai, Fastly and others) by CNAME, reverse DNS, Cloudflare's published ranges or HTTP response headers (`cf-ray`, `x-amz-cf-id`...), reported as a finding. The headers catch CDNs that DNS cannot reveal, such as Cloudflare in front of hosting IPs outside its published ranges. Before a port scan the program asks whether to skip the CDN domains (recommended) or scan them anyway. Skipped domains appear in the results table as `Skipped (CDN)`
 - Findings: wildcard DNS, CDN providers and IPs shared by several names are reported in a Findings table and exported (`*_findings.csv/json`, `*_wildcard_matches.csv/json`, Excel sheets)
 - Wildcard DNS detection: random names are resolved before the scan. Brute-force and pattern matches that only resolve through the wildcard are set apart from Table 1 and reported as findings, never deleted. Names confirmed by OSINT stay in the table
 - Warning `[nmap silent MM:SS]` in the progress bar when Nmap prints nothing for 10 minutes
@@ -25,6 +25,8 @@ All notable changes to this project will be documented in this file.
 - Security policy moved from `SECURITY.md` into the README, and the shell injection issue in DNS lookups is documented as a known limitation
 
 ### Fixed
+- Real subdomains were silently missed under load: a DNS query that timed out was counted as "the name does not exist", and an empty answer as "no addresses". A failed query is now retried (up to 3 passes), and only a real NXDOMAIN counts as absent
+- CDN edge IPs were reported as "Shared IP" findings. They are shared by design and are no longer listed there
 - IP order was random between runs, so "first IP" could change or be an IPv6 address. IPs are now sorted: IPv4 first, then IPv6
 - Domains with several scanned IPs got a "Without DETECTION" row for each IP without ports. Now only a domain with no port rows at all gets it
 - Shell injection in DNS lookups: `dig` and `nslookup` now run with argument lists instead of `shell=True`, so names from DNS responses cannot run commands

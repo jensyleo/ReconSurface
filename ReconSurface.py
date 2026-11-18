@@ -1247,69 +1247,74 @@ def verify_dependencies():
     
     return True
 
-def verify_dns_existence(domain):
+def _dig_query(record_type, name):
+    """Runs a dig query. Returns (answer, failed).
+
+    failed is True on a timeout or a transport error, which says nothing about whether the
+    name exists. NXDOMAIN is a normal answer (dig exits with 0 and prints nothing), not a failure.
+    """
+    try:
+        result = subprocess.run(["dig", "+short", record_type, name], stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, timeout=8)
+    except Exception:
+        return "", True
+    if result.returncode != 0:
+        return "", True
+    return result.stdout.strip(), False
+
+
+def _verify_dns_existence_once(domain):
+    """One pass of the existence check. True: it exists. False: it does not. None: a query failed, so unknown."""
+    uncertain = False
+    for record_type in ("A", "AAAA"):
+        answer, failed = _dig_query(record_type, domain)
+        if answer:
+            return True
+        uncertain = uncertain or failed
+
+    # A CNAME means the name exists, even if its target does not resolve right now
+    cname, failed = _dig_query("CNAME", domain)
+    if cname:
+        return True
+    uncertain = uncertain or failed
+
+    # Fallback with nslookup (A and AAAA)
+    for record_type in ("A", "AAAA"):
+        try:
+            result = subprocess.run(["nslookup", f"-type={record_type}", domain], stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, text=True, timeout=8)
+        except Exception:
+            uncertain = True
+            continue
+        if result.returncode == 0 and result.stdout.strip():
+            output = result.stdout.lower()
+            if "can't find" not in output and "not found" not in output and "nxdomain" not in output:
+                return True
+    return None if uncertain else False
+
+
+def verify_dns_existence(domain, attempts=3):
     """
     Verifies if the domain exists in DNS (A, AAAA or CNAME) using commands from the system.
-    
-    Utiliza dig, nslookup and socket for verify the existence from the domain.
-    
+
+    A query that times out is retried: under load a slow answer must not make a real name
+    look like it does not exist.
+
     Args:
         domain (str): Domain a verify.
-    
+        attempts (int): Passes to try when a query fails.
+
     Returns:
         bool: True if the domain exists, False in case otherwise.
     """
-    try:
-        # 1) A
-        cmd = ["dig", "+short", "A", domain]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
-        if result.returncode == 0 and result.stdout.strip():
-            return True
+    for attempt in range(attempts):
+        outcome = _verify_dns_existence_once(domain)
+        if outcome is not None:
+            return outcome
+        if attempt < attempts - 1:
+            time.sleep(0.5 * (attempt + 1))
+    return False
 
-        # 2) AAAA
-        cmd = ["dig", "+short", "AAAA", domain]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
-        if result.returncode == 0 and result.stdout.strip():
-            return True
-
-        # 3) CNAME (and resolve its destination)
-        cmd = ["dig", "+short", "CNAME", domain]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
-        cname = result.stdout.strip()
-        if result.returncode == 0 and cname:
-            # If there is a CNAME, consider it existing even if it does not resolve A at this moment
-            # Additionally try A/AAAA from the CNAME
-            cmd_a = ["dig", "+short", "A", cname]
-            res_a = subprocess.run(cmd_a, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
-            if res_a.returncode == 0 and res_a.stdout.strip():
-                return True
-            cmd_aaaa = ["dig", "+short", "AAAA", cname]
-            res_aaaa = subprocess.run(cmd_aaaa, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
-            if res_aaaa.returncode == 0 and res_aaaa.stdout.strip():
-                return True
-            # Otherwise, still consider it existing because of the CNAME
-            return True
-
-        # Fallback with nslookup (A and AAAA)
-        cmd = ["nslookup", "-type=A", domain]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
-        if result.returncode == 0 and result.stdout.strip():
-            output = result.stdout.lower()
-            if "can't find" not in output and "not found" not in output and "nxdomain" not in output:
-                return True
-
-        cmd = ["nslookup", "-type=AAAA", domain]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
-        if result.returncode == 0 and result.stdout.strip():
-            output = result.stdout.lower()
-            if "can't find" not in output and "not found" not in output and "nxdomain" not in output:
-                return True
-
-        return False
-    except subprocess.TimeoutExpired:
-        return False
-    except Exception:
-        return False
 
 def resolve_dns_record_command(domain, type_record):
     """Resuelve a type specific of record DNS using commands from the system"""
@@ -2003,6 +2008,36 @@ def _cname_chain(name):
     return [line.strip() for line in result.stdout.splitlines() if line.strip() and not is_ip_valid(line.strip())]
 
 
+def _cdn_from_http_headers(name):
+    """Looks for CDN markers in the HTTP response headers of the name (a HEAD request, redirects not followed)."""
+    for scheme in ("https", "http"):
+        try:
+            response = requests.head(f"{scheme}://{name}/", timeout=5, allow_redirects=False,
+                                     headers={"User-Agent": "Mozilla/5.0 (compatible; ReconSurface)"})
+        except requests.RequestException:
+            continue
+        headers = {key.lower(): str(value).lower() for key, value in response.headers.items()}
+        server = headers.get('server', '')
+        if 'cf-ray' in headers:
+            return "Cloudflare", "HTTP header cf-ray"
+        if server == 'cloudflare':
+            return "Cloudflare", "HTTP header server: cloudflare"
+        if 'x-amz-cf-id' in headers or 'cloudfront' in headers.get('via', ''):
+            return "Amazon CloudFront", "HTTP header x-amz-cf-id"
+        if any(key.startswith('x-akamai') for key in headers) or 'akamaighost' in server:
+            return "Akamai", "HTTP header x-akamai / server: AkamaiGHost"
+        if 'x-fastly-request-id' in headers:
+            return "Fastly", "HTTP header x-fastly-request-id"
+        if 'x-azure-ref' in headers:
+            return "Azure CDN", "HTTP header x-azure-ref"
+        if 'x-iinfo' in headers:
+            return "Imperva", "HTTP header x-iinfo"
+        if server.startswith('bunnycdn'):
+            return "Bunny CDN", "HTTP header server: BunnyCDN"
+        return None  # It answered without CDN markers: no need to try the other scheme
+    return None
+
+
 def detect_cdn(name, ips):
     """Returns (provider, evidence) when the name is served through a CDN, or None."""
     for target in _cname_chain(name):
@@ -2018,7 +2053,8 @@ def detect_cdn(name, ips):
         provider = _cdn_provider_from_hostname(pointer) if pointer else None
         if provider:
             return provider, f"reverse DNS {pointer.rstrip('.')}"
-    return None
+    # Last signal, the only one that needs an HTTP request: CDNs that DNS and IP ranges do not reveal
+    return _cdn_from_http_headers(name)
 
 
 def find_cdn_names(subdomains_per_ip):
@@ -2144,12 +2180,14 @@ def build_findings(domain, subdomains_per_ip, wildcard_ips, wildcard_matches, cd
             findings.append({
                 'type': 'Wildcard matches',
                 'target': f"*.{domain}",
-                'detail': f"{len(wildcard_matches)} names resolve only through the wildcard (full list in the export)",
+                'detail': f"{len(wildcard_matches)} name{'s' if len(wildcard_matches) != 1 else ''} resolve only through the wildcard (full list in the export)",
                 'names': '; '.join(match['subdomain'] for match in wildcard_matches),
             })
 
     names_per_ip = {}
     for name, ips in subdomains_per_ip.items():
+        if name in (cdn or {}):
+            continue
         for ip in dict.fromkeys(ips):
             names_per_ip.setdefault(ip, []).append(name)
     shared = sorted(((ip, names) for ip, names in names_per_ip.items() if len(names) >= 2),
@@ -2171,7 +2209,7 @@ def build_findings(domain, subdomains_per_ip, wildcard_ips, wildcard_matches, cd
         findings.append({
             'type': 'CDN',
             'target': provider,
-            'detail': f"{len(names)} names behind it: {', '.join(names[:3])}{more}. Their IPs are the provider's edge servers, not the target's",
+            'detail': f"{len(names)} name{'s' if len(names) != 1 else ''} behind it: {', '.join(names[:3])}{more}. Their IPs are the provider's edge servers, not the target's",
             'names': '; '.join(names),
         })
 
@@ -2809,13 +2847,22 @@ def filter_only_ips(records):
     """Filters only the IPs valid of a list of records DNS"""
     return [record for record in records if is_ip_valid(record)]
 
-def resolve_ips_a_aaaa(domain_fqdn):
-    """Resuelve and combines IPs IPv4 (A) e IPv6 (AAAA) for a FQDN."""
+def resolve_ips_a_aaaa(domain_fqdn, attempts=3):
+    """Resuelve and combines IPs IPv4 (A) e IPv6 (AAAA) for a FQDN.
+
+    An empty answer is retried: a timeout under load looks the same as a name without addresses.
+    """
     import ipaddress
-    ips_a = resolve_dns_record_command(domain_fqdn, 'A') or []
-    ips_aaaa = resolve_dns_record_command(domain_fqdn, 'AAAA') or []
-    # Merge and remove duplicates
-    unique_ips = {ip for ip in (ips_a + ips_aaaa) if is_ip_valid(ip)}
+    unique_ips = set()
+    for attempt in range(attempts):
+        ips_a = resolve_dns_record_command(domain_fqdn, 'A') or []
+        ips_aaaa = resolve_dns_record_command(domain_fqdn, 'AAAA') or []
+        # Merge and remove duplicates
+        unique_ips = {ip for ip in (ips_a + ips_aaaa) if is_ip_valid(ip)}
+        if unique_ips:
+            break
+        if attempt < attempts - 1:
+            time.sleep(0.3 * (attempt + 1))
 
     # Stable order between runs (a set has no order): IPv4 first, then IPv6, each sorted numerically
     def order_key(ip):
@@ -2837,7 +2884,7 @@ def detect_wildcard_ips(domain, probes=3):
     wildcard_ips = set()
     for _ in range(probes):
         label = "zz" + "".join(random.choices(string.ascii_lowercase + string.digits, k=12))
-        wildcard_ips.update(resolve_ips_a_aaaa(f"{label}.{domain}"))
+        wildcard_ips.update(resolve_ips_a_aaaa(f"{label}.{domain}", attempts=2))
     return wildcard_ips
 
 _ipv6_connectivity = None
