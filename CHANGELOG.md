@@ -9,17 +9,22 @@ All notable changes to this project will be documented in this file.
 - Colored table of the shared IPs of a group, with the share of domains per IP
 - Wildcard DNS detection: random names are resolved before the scan, and brute-force and pattern matches that only resolve to the wildcard IPs are discarded. Names confirmed by OSINT are kept
 - Warning `[nmap silent MM:SS]` in the progress bar when Nmap prints nothing for 10 minutes
+- IPv6 scanning: IPv6 addresses are scanned with Nmap `-6`. The program announces them before scanning and skips them, with a notice, if the machine has no IPv6 connectivity
 - Full table of the group's domains; groups of 200 or more domains are saved to `RESULTS/` and the file path is shown
 
 ### Changed
 - Each unique IP is scanned once; its results are copied to every domain that resolves to it
 - Shared-IP tables use the same colors as the port results table: blue borders, colored text
+- Result folders in `RESULTS/` are no longer deleted automatically (before, only the 3 most recent were kept)
+- Execution logs keep the last 100 (before, 20), and the program reports when it removes old ones
 - The IP selection happens before the sudo prompt and before the output folder is created
 
 ### Changed
 - Security policy moved from `SECURITY.md` into the README, and the shell injection issue in DNS lookups is documented as a known limitation
 
 ### Fixed
+- IP order was random between runs, so "first IP" could change or be an IPv6 address. IPs are now sorted: IPv4 first, then IPv6
+- Domains with several scanned IPs got a "Without DETECTION" row for each IP without ports. Now only a domain with no port rows at all gets it
 - Shell injection in DNS lookups: `dig` and `nslookup` now run with argument lists instead of `shell=True`, so names from DNS responses cannot run commands
 - Frozen timer during an Nmap scan: when Nmap sat at 95% for 90 seconds, the stuck-progress watchdog marked the port scan as completed and the progress thread exited for good. The thread now only ends when the scan ends, and an unexpected error in one iteration no longer stops it
 - CONTROL-C during an Nmap scan hung the program: the logger lock was not reentrant, so the signal handler blocked trying to take it again. The lock is now an `RLock`

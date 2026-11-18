@@ -21,7 +21,7 @@ Current version: v2.8
 - WHOIS lookup (registrant, creation/expiration dates, name servers, status)
 - SSL certificate validation with expiration alerts (critical <30 days, warning 30-90 days, safe >90 days)
 - HTTP header inspection (protocol, status code, server, security headers)
-- Execution logging with automatic rotation (last 20 runs kept) and an end-of-run statistics summary
+- Execution logging with rotation (last 100 runs kept, and the program reports when it removes old logs) and an end-of-run statistics summary
 
 ## OSINT Sources
 
@@ -97,7 +97,7 @@ Port scan submenu (options 2 and 3):
 4. Mixed (e.g. `1-1000,8080,9000`)
 5. All ports (`-p-`)
 
-When domains resolve to several IPs and share some of them, a submenu asks once per group whether to scan the first IP of each domain or all of their IPs. Each shared IP is scanned once, and its results are shown for every domain that resolves to it.
+When domains resolve to several IPs and share some of them, a table shows the shared IPs and the domains of the group, and a submenu asks once per group whether to scan only the most shared IP or all the IPs of the group. Each IP is scanned once, and its results are shown for every domain that resolves to it. Groups of 200 domains or more are saved to a file in `RESULTS/` instead of being printed. IPs are always listed IPv4 first, in a stable order. IPv6 addresses are scanned with Nmap `-6`: the program announces them first, and skips them if this machine has no IPv6 connectivity.
 
 Nmap requires elevated privileges; the program prompts for the sudo password interactively (up to 3 attempts) and never stores it.
 
@@ -112,7 +112,7 @@ CONTROL-C can interrupt the program at any point:
 
 ### Output
 
-Results are written to `RESULTS/<domain>_<DD-MM-YYYY>_<HH:MM>/` next to the script, with a `Consolidated/` subfolder containing the merged CSV, JSON, XML, and Excel files for that session. Only the 3 most recent result folders are kept; older ones are pruned automatically. Execution logs are written to `LOGS/` (last 20 kept).
+Results are written to `RESULTS/<domain>_<DD-MM-YYYY>_<HH:MM>/` next to the script, with a `Consolidated/` subfolder containing the merged CSV, JSON, XML, and Excel files for that session. Result folders are never deleted automatically. Execution logs are written to `LOGS/`; the last 100 are kept, and the program prints a notice when it removes older ones.
 
 ## Architecture
 
@@ -146,7 +146,7 @@ Option 3: analyze_url_site_with_ports()-> select_ports_interactive() -> run_flow
 | `run_flow_scan_ports(...)` | Shared flow: sudo, Nmap, export, display |
 | `run_nmap_stream(...)` | Runs Nmap with real-time progress parsing |
 | `parse_nmap_xml(...)` | Parses Nmap XML output (open and closed ports) |
-| `create_output_directory(domain)` | Creates the dated result folder, prunes old ones |
+| `create_output_directory(domain)` | Creates the dated result folder |
 | `consolidate_xml_session(out_dir)` | Merges per-target Nmap XML into one file |
 | `create_excel_consolidated(out_dir)` | Builds the multi-sheet Excel workbook |
 | `verify_dns_existence(domain)` | Checks whether a domain resolves |
