@@ -458,7 +458,8 @@ class TeeLogger:
         self.original_stderr = sys.stderr
         self.log_file = None
         self.log_file_path = log_file_path
-        self.lock = threading.Lock()
+        # RLock: stop() takes the lock and then _write_summary() takes it again in the same thread
+        self.lock = threading.RLock()
         self.last_line_was_carriage_return = False
         self.current_line_buffer = ""
         

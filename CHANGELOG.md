@@ -18,6 +18,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - Shell injection in DNS lookups: `dig` and `nslookup` now run with argument lists instead of `shell=True`, so names from DNS responses cannot run commands
+- CONTROL-C during an Nmap scan hung the program: the logger lock was not reentrant, so the signal handler blocked trying to take it again. The lock is now an `RLock`
 - CONTROL-C did not work in the IP menu and other inputs: the global handler exited the program. Inputs now raise `KeyboardInterrupt` and return to the menu
 - A cancelled IP selection now returns to the main menu without creating a folder
 
