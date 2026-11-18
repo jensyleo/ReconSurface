@@ -3141,13 +3141,11 @@ def run_nmap_stream(target, sudo_password, ports="-p-", out_dir=None):
                                     counters = f"({progress_nmap['ports_scanned']}/{progress_nmap['total_ports']})"
                                     phase_text = ""
                                 else:
-                                    # Status between phases, not show nothing for avoid confusion
-                                    # But Not stop the thread if we are in phase of detection of services
-                                    if not progress_nmap.get('phase_detection', False):
-                                        # Only stop if Not we are in detection of services
-                                        progress_nmap['active'] = False
-                                        break
-                                    # If we are in detection of services, continue the loop
+                                    # Status between phases (e.g. the 95% watchdog just marked -sS as completed
+                                    # and -sV has not started yet): keep the thread alive and keep the timer
+                                    # running. Only the main thread ends this loop by setting active to False.
+                                    counters = f"({progress_nmap['ports_scanned']}/{progress_nmap['total_ports']})"
+                                    phase_text = ""
                             else:
                                 # Scan -sS in progress
                                 counters = f"({progress_nmap['ports_scanned']}/{progress_nmap['total_ports']})"
@@ -3193,6 +3191,16 @@ def run_nmap_stream(target, sudo_password, ports="-p-", out_dir=None):
                 except KeyboardInterrupt:
                     # Only allow CONTROL-C, ignore other keys
                     break
+                except Exception:
+                    # Keep the timer alive: record the error in the Nmap debug log and continue
+                    try:
+                        if progress_nmap.get('debug_log_path'):
+                            import traceback
+                            with open(progress_nmap['debug_log_path'], 'a', encoding='utf-8') as _fdbg:
+                                _fdbg.write(f"[ERROR] progress thread: {traceback.format_exc()}\n")
+                    except Exception:
+                        pass
+                    time.sleep(0.1)
             
             # Restore input
             _restore_terminal_mode(old_settings)
@@ -3870,6 +3878,17 @@ def most_shared_ip(group_domains, subdomains_per_ip):
     return max(counts, key=lambda ip: counts[ip])
 
 
+def print_boxed_row(pad, line, text_color, border_color=Colors.BLUE):
+    """Prints a table row like Table 2: blue vertical borders, text in its own color."""
+    cells = line[1:-1].split("║")
+    print(pad, end="")
+    print_colored("║", border_color, end="")
+    for cell in cells:
+        print_colored(cell, text_color, end="")
+        print_colored("║", border_color, end="")
+    print()
+
+
 def print_shared_ip_table(group_domains, subdomains_per_ip, common_ip):
     """Prints the table of IPs shared by a group of domains, in the same style as Table 2."""
     union_ips = list(dict.fromkeys(ip for d in group_domains for ip in subdomains_per_ip[d]))
@@ -3880,10 +3899,9 @@ def print_shared_ip_table(group_domains, subdomains_per_ip, common_ip):
     pad = " " * max(0, (get_terminal_width() - width_total - 2) // 2)
 
     print_colored(f"\n{pad}{'═' * (width_total + 2)}", Colors.CYAN)
-    print_colored(f"{pad}║{title:^{width_total}}║", Colors.BOLD + Colors.WHITE)
+    print_boxed_row(pad, f"║{title:^{width_total}}║", Colors.BOLD + Colors.WHITE)
     print_colored(f"{pad}╠{'╦'.join('═' * w for _, w in cols)}╣", Colors.CYAN)
-    header = "║".join(f"{name:^{w}}" for name, w in cols)
-    print_colored(f"{pad}║{header}║", Colors.BOLD + Colors.YELLOW)
+    print_boxed_row(pad, "║" + "║".join(f"{name:^{w}}" for name, w in cols) + "║", Colors.BOLD + Colors.YELLOW)
     print_colored(f"{pad}╠{'╬'.join('═' * w for _, w in cols)}╣", Colors.CYAN)
     for ip in union_ips:
         count = sum(1 for d in group_domains if ip in subdomains_per_ip[d])
@@ -3892,7 +3910,7 @@ def print_shared_ip_table(group_domains, subdomains_per_ip, common_ip):
         role = "MOST SHARED" if is_common else "shared"
         color = Colors.GREEN if is_common else Colors.WHITE
         cells = [f"{ip:^{cols[0][1]}}", f"{count:^{cols[1][1]}}", f"{share:^{cols[2][1]}}", f"{role:^{cols[3][1]}}"]
-        print_colored(f"{pad}║" + "║".join(cells) + "║", color)
+        print_boxed_row(pad, "║" + "║".join(cells) + "║", color)
     print_colored(f"{pad}╚{'╩'.join('═' * w for _, w in cols)}╝", Colors.CYAN)
     print_domains_table(group_domains, subdomains_per_ip)
 
@@ -3950,12 +3968,12 @@ def print_domains_table(group_domains, subdomains_per_ip):
         return
 
     print_colored(f"\n{pad}{lines[0]}", Colors.CYAN)
-    print_colored(f"{pad}{lines[1]}", Colors.BOLD + Colors.WHITE)
+    print_boxed_row(pad, lines[1], Colors.BOLD + Colors.WHITE)
     print_colored(f"{pad}{lines[2]}", Colors.CYAN)
-    print_colored(f"{pad}{lines[3]}", Colors.BOLD + Colors.YELLOW)
+    print_boxed_row(pad, lines[3], Colors.BOLD + Colors.YELLOW)
     print_colored(f"{pad}{lines[4]}", Colors.CYAN)
     for row in lines[5:-1]:
-        print_colored(f"{pad}{row}", Colors.WHITE)
+        print_boxed_row(pad, row, Colors.WHITE)
     print_colored(f"{pad}{lines[-1]}", Colors.CYAN)
 
 
