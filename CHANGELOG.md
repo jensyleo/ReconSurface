@@ -7,7 +7,8 @@ All notable changes to this project will be documented in this file.
 ### Added
 - IP selection menu, asked once per group of domains that share IPs: scan only the most shared IP or all IPs of the group
 - Colored table of the shared IPs of a group, with the share of domains per IP
-- Findings: wildcard DNS and IPs shared by several names are reported in a Findings table and exported (`*_findings.csv/json`, `*_wildcard_matches.csv/json`, Excel sheets)
+- CDN detection (CloudFront, Cloudflare, Akamai, Fastly and others) by CNAME, reverse DNS or Cloudflare's published ranges, reported as a finding. Before a port scan the program asks whether to skip the CDN domains (recommended) or scan them anyway. Skipped domains appear in the results table as `Skipped (CDN)`
+- Findings: wildcard DNS, CDN providers and IPs shared by several names are reported in a Findings table and exported (`*_findings.csv/json`, `*_wildcard_matches.csv/json`, Excel sheets)
 - Wildcard DNS detection: random names are resolved before the scan. Brute-force and pattern matches that only resolve through the wildcard are set apart from Table 1 and reported as findings, never deleted. Names confirmed by OSINT stay in the table
 - Warning `[nmap silent MM:SS]` in the progress bar when Nmap prints nothing for 10 minutes
 - IPv6 scanning: IPv6 addresses are scanned with Nmap `-6`. The program announces them before scanning and skips them, with a notice, if the machine has no IPv6 connectivity

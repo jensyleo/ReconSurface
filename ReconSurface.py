@@ -1953,10 +1953,180 @@ def search_subdomains_osint(domain):
 
     return list(subdomains_found)
 
-_findings_state = {'domain': None, 'findings': [], 'wildcard_matches': []}
+import ipaddress
+
+# Hostname suffixes that identify a CDN, seen in CNAME targets and in reverse DNS names
+CDN_PROVIDERS = {
+    'Amazon CloudFront': ('.cloudfront.net',),
+    'Cloudflare': ('.cloudflare.net', '.cloudflare.com'),
+    'Akamai': ('.akamaiedge.net', '.akamai.net', '.edgekey.net', '.edgesuite.net', '.akamaitechnologies.com'),
+    'Fastly': ('.fastly.net', '.fastlylb.net'),
+    'Azure CDN': ('.azureedge.net', '.azurefd.net'),
+    'Bunny CDN': ('.b-cdn.net',),
+    'Imperva': ('.incapdns.net',),
+}
+
+# Cloudflare proxied sites have no CNAME and no reverse DNS, so its published ranges are used.
+# Source: https://www.cloudflare.com/ips/ (checked 2026-11-18)
+_CLOUDFLARE_NETWORKS = [ipaddress.ip_network(cidr) for cidr in (
+    '173.245.48.0/20', '103.21.244.0/22', '103.22.200.0/22', '103.31.4.0/22', '141.101.64.0/18',
+    '108.162.192.0/18', '190.93.240.0/20', '188.114.96.0/20', '197.234.240.0/22', '198.41.128.0/17',
+    '162.158.0.0/15', '104.16.0.0/13', '104.24.0.0/14', '172.64.0.0/13', '131.0.72.0/22',
+    '2400:cb00::/32', '2606:4700::/32', '2803:f800::/32', '2405:b500::/32', '2405:8100::/32',
+    '2a06:98c0::/29', '2c0f:f248::/32',
+)]
 
 
-def build_findings(domain, subdomains_per_ip, wildcard_ips, wildcard_matches):
+def _cdn_provider_from_hostname(hostname):
+    host = hostname.lower().rstrip(".")
+    for provider, suffixes in CDN_PROVIDERS.items():
+        if host.endswith(suffixes):
+            return provider
+    return None
+
+
+def _in_cloudflare_ranges(ip):
+    try:
+        address = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(network.version == address.version and address in network for network in _CLOUDFLARE_NETWORKS)
+
+
+def _cname_chain(name):
+    """CNAME targets that DNS follows to resolve the name (dig prints them before the addresses)."""
+    try:
+        result = subprocess.run(["dig", "+short", "A", name], stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, timeout=8)
+    except Exception:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip() and not is_ip_valid(line.strip())]
+
+
+def detect_cdn(name, ips):
+    """Returns (provider, evidence) when the name is served through a CDN, or None."""
+    for target in _cname_chain(name):
+        provider = _cdn_provider_from_hostname(target)
+        if provider:
+            return provider, f"CNAME {target.rstrip('.')}"
+    for ip in ips:
+        if _in_cloudflare_ranges(ip):
+            return "Cloudflare", f"IP {ip} is in Cloudflare's published ranges"
+    first_ipv4 = next((ip for ip in ips if ":" not in ip), None)
+    if first_ipv4:
+        pointer = reverse_dns_lookup(first_ipv4)
+        provider = _cdn_provider_from_hostname(pointer) if pointer else None
+        if provider:
+            return provider, f"reverse DNS {pointer.rstrip('.')}"
+    return None
+
+
+def find_cdn_names(subdomains_per_ip):
+    """Returns {name: {'provider', 'evidence'}} for the names that are served through a CDN."""
+    found = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=25) as executor:
+        futures = {executor.submit(detect_cdn, name, ips): name for name, ips in subdomains_per_ip.items()}
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                result = future.result()
+            except Exception:
+                result = None
+            if result:
+                found[futures[future]] = {'provider': result[0], 'evidence': result[1]}
+    return {name: found[name] for name in subdomains_per_ip if name in found}
+
+
+def select_cdn_policy_interactive(cdn_names):
+    """Asks what to do with the domains served through a CDN.
+
+    Options:
+        1. Skip the CDN domains (recommended)
+        2. Scan them anyway
+
+    Returns:
+        str: 'skip' or 'scan'.
+        None: if the user cancels with CONTROL-C.
+    """
+    by_provider = {}
+    for name, info in cdn_names.items():
+        by_provider.setdefault(info['provider'], []).append(name)
+
+    print_colored(f"\n[!] {len(cdn_names)} domain(s) are served through a CDN.", Colors.YELLOW)
+    print_colored("    Their IPs belong to the provider's edge servers, not to the target:", Colors.YELLOW)
+    print_colored("    scanning them means scanning third-party infrastructure.", Colors.YELLOW)
+
+    cols = [("PROVIDER", 20), ("DOMAINS", 9), ("EVIDENCE (FIRST DOMAIN)", 52)]
+    width_total = sum(w for _, w in cols) + len(cols) - 1
+    pad = " " * max(0, (get_terminal_width() - width_total - 2) // 2)
+    print_colored(f"\n{pad}{'═' * (width_total + 2)}", Colors.CYAN)
+    print_boxed_row(pad, "║" + "║".join(f"{name:^{w}}" for name, w in cols) + "║", Colors.BOLD + Colors.YELLOW)
+    print_colored(f"{pad}╠{'╬'.join('═' * w for _, w in cols)}╣", Colors.CYAN)
+    for provider, names in sorted(by_provider.items()):
+        evidence = cdn_names[names[0]]['evidence']
+        evidence = evidence if len(evidence) <= cols[2][1] - 2 else evidence[:cols[2][1] - 5] + "..."
+        cells = [f"{provider:^{cols[0][1]}}", f"{len(names):^{cols[1][1]}}", f" {evidence:<{cols[2][1] - 1}}"]
+        print_boxed_row(pad, "║" + "║".join(cells) + "║", Colors.WHITE)
+    print_colored(f"{pad}╚{'╩'.join('═' * w for _, w in cols)}╝", Colors.CYAN)
+
+    terminal_width = get_terminal_width()
+    menu_width = 52
+    margin = (terminal_width - menu_width) // 2
+    print(f"\n{RGB_GREEN}{' ' * margin}╔{'═' * menu_width}╗{RESET_COLOR}")
+    print(f"{RGB_GREEN}{' ' * margin}║{RGB_BLUE}{'CDN DOMAINS':^52}{RGB_GREEN}║{RESET_COLOR}")
+    print(f"{RGB_GREEN}{' ' * margin}╠{'═' * menu_width}╣{RESET_COLOR}")
+    print(f"{RGB_GREEN}{' ' * margin}║ {RGB_YELLOW}[1]{RGB_BLUE} 🎯 {Colors.WHITE}{pad_menu_line('Skip the CDN domains (recommended)', menu_width - 8)}{RGB_GREEN}║{RESET_COLOR}")
+    print(f"{RGB_GREEN}{' ' * margin}║ {RGB_YELLOW}[2]{RGB_BLUE} 🌐 {Colors.WHITE}{pad_menu_line('Scan them anyway (third-party servers)', menu_width - 8)}{RGB_GREEN}║{RESET_COLOR}")
+    print(f"{RGB_GREEN}{' ' * margin}╚{'═' * menu_width}╝{RESET_COLOR}")
+
+    import signal
+    _handler_previo = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        while True:
+            try:
+                option = input(f"\n{RGB_BLUE}[?] {Colors.WHITE}Select an option {RGB_YELLOW}(1-2){Colors.WHITE}: ").strip()
+                if option == "1":
+                    return 'skip'
+                elif option == "2":
+                    return 'scan'
+                print_colored(f"[-] Enter 1 or 2", Colors.RED)
+            except KeyboardInterrupt:
+                print_colored(f"\n[*] Scan cancelled for the user", Colors.RED)
+                return None
+    finally:
+        signal.signal(signal.SIGINT, _handler_previo)
+
+
+def apply_cdn_gate(domain, subdomains_per_ip):
+    """Separates the domains served through a CDN from the ones to scan, asking the user first.
+
+    Returns:
+        tuple: (skipped, scan_map). skipped is {name: provider} for the CDN domains the user chose
+               not to scan, and scan_map is the map of the domains to scan.
+        None: if the user cancels with CONTROL-C.
+    """
+    known = _findings_state['cdn'] if _findings_state['domain'] == domain else None
+    if known is None:
+        # Option 3 does not detect subdomains: resolve the names to check their IPs
+        check_map = {name: (ips if any(is_ip_valid(ip) for ip in ips) else resolve_ips_a_aaaa(name))
+                     for name, ips in subdomains_per_ip.items()}
+        known = find_cdn_names(check_map)
+    cdn_names = {name: info for name, info in known.items() if name in subdomains_per_ip}
+    if not cdn_names:
+        return {}, subdomains_per_ip
+
+    policy = select_cdn_policy_interactive(cdn_names)
+    if policy is None:
+        return None
+    if policy == 'scan':
+        return {}, subdomains_per_ip
+    scan_map = {name: ips for name, ips in subdomains_per_ip.items() if name not in cdn_names}
+    return {name: info['provider'] for name, info in cdn_names.items()}, scan_map
+
+
+_findings_state = {'domain': None, 'findings': [], 'wildcard_matches': [], 'cdn': None}
+
+
+def build_findings(domain, subdomains_per_ip, wildcard_ips, wildcard_matches, cdn=None):
     """Builds the findings of a subdomain detection run and keeps them for printing and export.
 
     A finding is an observation about the target, not an error: a wildcard DNS record, the
@@ -1993,7 +2163,19 @@ def build_findings(domain, subdomains_per_ip, wildcard_ips, wildcard_matches):
             'names': '; '.join(names),
         })
 
-    _findings_state.update(domain=domain, findings=findings, wildcard_matches=list(wildcard_matches))
+    names_per_provider = {}
+    for name, info in (cdn or {}).items():
+        names_per_provider.setdefault(info['provider'], []).append(name)
+    for provider, names in sorted(names_per_provider.items()):
+        more = f" (+{len(names) - 3} more)" if len(names) > 3 else ""
+        findings.append({
+            'type': 'CDN',
+            'target': provider,
+            'detail': f"{len(names)} names behind it: {', '.join(names[:3])}{more}. Their IPs are the provider's edge servers, not the target's",
+            'names': '; '.join(names),
+        })
+
+    _findings_state.update(domain=domain, findings=findings, wildcard_matches=list(wildcard_matches), cdn=cdn or {})
     return findings
 
 
@@ -2020,7 +2202,7 @@ def print_findings_table(findings):
     print_colored(f"{pad}╠{'═' * num_width}╬{'═' * type_width}╬{'═' * target_width}╬{'═' * detail_width}╣", Colors.CYAN)
     import textwrap
     for index, finding in enumerate(findings, start=1):
-        color = Colors.YELLOW if finding['type'].startswith('Wildcard') else Colors.WHITE
+        color = Colors.YELLOW if finding['type'].startswith('Wildcard') or finding['type'] == 'CDN' else Colors.WHITE
         # Long details continue on the next lines, as in Table 1
         detail_lines = textwrap.wrap(finding['detail'], width=detail_width - 2) or [""]
         for line_number, detail_line in enumerate(detail_lines):
@@ -2074,7 +2256,7 @@ def detect_subdomains(domain, show_details=True, show_table2=True, show_summary=
 
     # Wildcard DNS: every name resolves, so guesses that only resolve through it are no evidence of a real host.
     # They are not deleted: they are set apart from Table 1 and reported as findings.
-    _findings_state.update(domain=None, findings=[], wildcard_matches=[])
+    _findings_state.update(domain=None, findings=[], wildcard_matches=[], cdn=None)
     wildcard_ips = detect_wildcard_ips(domain)
     wildcard_matches = []
     if wildcard_ips:
@@ -2472,8 +2654,10 @@ def detect_subdomains(domain, show_details=True, show_table2=True, show_summary=
     print(pad1, end="")
     print_colored(f"{'═'*(width_total+1)}", Colors.CYAN)
 
-    # Findings: wildcard DNS and shared IPs
-    print_findings_table(build_findings(domain, subdomains_per_ip, wildcard_ips, wildcard_matches))
+    # Findings: wildcard DNS, CDN providers and shared IPs
+    print_colored("\n[*] Checking for CDN providers...", Colors.BLUE)
+    cdn_names = find_cdn_names(subdomains_per_ip)
+    print_findings_table(build_findings(domain, subdomains_per_ip, wildcard_ips, wildcard_matches, cdn_names))
     
     # Table 2: Subdomains → Reverse DNS (dynamic)
     # Group reverse DNS for subdomain
@@ -4348,9 +4532,10 @@ def print_table_nmap(results, domain_base=None):
             if es_sin:
                 color_subdomain = Colors.ORANGE
                 color_other_columns = Colors.ORANGE
-                port_txt = "Without DETECTION"
-                service_txt = "Without DETECTION"
-                version_txt = "Without DETECTION"
+                # Use the text of the row itself: 'Without DETECTION' or, for skipped CDN domains, 'Skipped (CDN)'
+                port_txt = r.get('port') or "Without DETECTION"
+                service_txt = r.get('service') or "Without DETECTION"
+                version_txt = r.get('version') or "Without DETECTION"
                 status_txt = "N/A"
             else:
                 port_txt = r['port']
@@ -4778,8 +4963,17 @@ def run_flow_scan_ports(domain, subdomains_per_ip, ports_scan="-p-"):
         - The delays of wait are interruptible (intervalos of 0.1s).
         - exports Table 2 (results nmap) but Not Table 1 (that is exports before of call is function).
     """
+    # Domains served through a CDN: ask before scanning the provider's servers
+    cdn_gate = apply_cdn_gate(domain, subdomains_per_ip)
+    if cdn_gate is None:
+        return "abort"  # User cancelled
+    cdn_skipped, scan_map = cdn_gate
+    if not scan_map:
+        print_colored("\n[*] Nothing left to scan: every domain is served through a CDN", Colors.YELLOW)
+        return "abort"
+
     # Choose the IPs to scan before sudo and before creating any output folder
-    selected_ips = choose_scan_targets(subdomains_per_ip)
+    selected_ips = choose_scan_targets(scan_map)
     if selected_ips is None:
         return "abort"  # User cancelled the IP selection
     announce_ipv6_targets(selected_ips)
@@ -4881,6 +5075,18 @@ def run_flow_scan_ports(domain, subdomains_per_ip, ports_scan="-p-"):
 
     # Run scan of ports with nmap and live progress (saving raw)
     results_nmap = run_scan_ports(selected_ips, sudo_password, ports_scan, out_dir)
+
+    # The CDN domains the user chose not to scan still appear in the results table
+    for cdn_name, cdn_provider in cdn_skipped.items():
+        results_nmap.append({
+            'target': cdn_name,
+            'target_original': cdn_name,
+            'port': 'Skipped (CDN)',
+            'service': 'Skipped (CDN)',
+            'version': cdn_provider,
+            'status': 'N/A',
+            'sin_detection': True
+        })
 
     # out_dir already was created arriba
     session_tag = os.path.basename(out_dir)

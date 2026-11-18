@@ -13,7 +13,8 @@ Current version: v2.8
 - Full DNS analysis (A, AAAA, MX, NS, TXT, CNAME, SOA)
 - Subdomain discovery via 200 common brute-force names plus 14 free OSINT sources, queried in parallel
 - Wildcard DNS detection: random names are resolved before the scan. If a wildcard exists, brute-force and pattern matches that only resolve through it are set apart from the subdomain table, but never deleted: they are reported as findings and saved in full. Names confirmed by OSINT always stay in the table
-- Findings table: wildcard DNS and IPs shared by several names (shared hosting) are reported on screen and exported as `*_findings.csv/json`, plus `*_wildcard_matches.csv/json` and one Excel sheet each
+- CDN detection: domains served through Amazon CloudFront, Cloudflare, Akamai, Fastly and similar (by CNAME, reverse DNS or Cloudflare's published ranges) are reported as a finding. Before a port scan, the program asks whether to skip them (recommended) or scan them anyway, because their IPs belong to the provider's edge servers, not to the target. Skipped domains stay in the results table as `Skipped (CDN)`
+- Findings table: wildcard DNS, CDN providers and IPs shared by several names (shared hosting) are reported on screen and exported as `*_findings.csv/json`, plus `*_wildcard_matches.csv/json` and one Excel sheet each
 - Nmap port scanning with 5 modes: single port, range, group, mixed, or all ports (`-p-`)
 - Real-time progress bar with automatic timing calibration across 5 scan phases. The percentage is an estimate: if Nmap prints nothing for 10 minutes, the bar shows `[nmap silent MM:SS]`
 - Robust CONTROL-C handling at any point during execution (sudo prompt, scanning, OSINT queries, menu input)
