@@ -12,7 +12,8 @@ Current version: v2.8
   - Analyze URL/Site with ports (Nmap port scan only, no OSINT)
 - Full DNS analysis (A, AAAA, MX, NS, TXT, CNAME, SOA)
 - Subdomain discovery via 200 common brute-force names plus 14 free OSINT sources, queried in parallel
-- Wildcard DNS detection: brute-force and pattern matches that only resolve through a wildcard record are discarded; names confirmed by OSINT are always kept
+- Wildcard DNS detection: random names are resolved before the scan. If a wildcard exists, brute-force and pattern matches that only resolve through it are set apart from the subdomain table, but never deleted: they are reported as findings and saved in full. Names confirmed by OSINT always stay in the table
+- Findings table: wildcard DNS and IPs shared by several names (shared hosting) are reported on screen and exported as `*_findings.csv/json`, plus `*_wildcard_matches.csv/json` and one Excel sheet each
 - Nmap port scanning with 5 modes: single port, range, group, mixed, or all ports (`-p-`)
 - Real-time progress bar with automatic timing calibration across 5 scan phases. The percentage is an estimate: if Nmap prints nothing for 10 minutes, the bar shows `[nmap silent MM:SS]`
 - Robust CONTROL-C handling at any point during execution (sudo prompt, scanning, OSINT queries, menu input)

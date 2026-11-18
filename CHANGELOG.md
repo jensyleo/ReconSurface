@@ -7,7 +7,8 @@ All notable changes to this project will be documented in this file.
 ### Added
 - IP selection menu, asked once per group of domains that share IPs: scan only the most shared IP or all IPs of the group
 - Colored table of the shared IPs of a group, with the share of domains per IP
-- Wildcard DNS detection: random names are resolved before the scan, and brute-force and pattern matches that only resolve to the wildcard IPs are discarded. Names confirmed by OSINT are kept
+- Findings: wildcard DNS and IPs shared by several names are reported in a Findings table and exported (`*_findings.csv/json`, `*_wildcard_matches.csv/json`, Excel sheets)
+- Wildcard DNS detection: random names are resolved before the scan. Brute-force and pattern matches that only resolve through the wildcard are set apart from Table 1 and reported as findings, never deleted. Names confirmed by OSINT stay in the table
 - Warning `[nmap silent MM:SS]` in the progress bar when Nmap prints nothing for 10 minutes
 - IPv6 scanning: IPv6 addresses are scanned with Nmap `-6`. The program announces them before scanning and skips them, with a notice, if the machine has no IPv6 connectivity
 - Full table of the group's domains; groups of 200 or more domains are saved to `RESULTS/` and the file path is shown

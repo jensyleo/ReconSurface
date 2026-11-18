@@ -1109,7 +1109,7 @@ def _build_consolidated_folder(out_dir):
 def create_output_directory(domain):
     """
     Creates and returns a output directory with format DD-MM-YYYY.
-    Keeps only the 3 most recent folders in RESULTS/.
+    Result folders are never deleted automatically.
     
     Args:
         domain (str): Name from the domain for create the folder.
@@ -1953,6 +1953,103 @@ def search_subdomains_osint(domain):
 
     return list(subdomains_found)
 
+_findings_state = {'domain': None, 'findings': [], 'wildcard_matches': []}
+
+
+def build_findings(domain, subdomains_per_ip, wildcard_ips, wildcard_matches):
+    """Builds the findings of a subdomain detection run and keeps them for printing and export.
+
+    A finding is an observation about the target, not an error: a wildcard DNS record, the
+    names that only resolve through it, and IPs used by several names (shared hosting).
+    """
+    findings = []
+    if wildcard_ips:
+        findings.append({
+            'type': 'Wildcard DNS',
+            'target': f"*.{domain}",
+            'detail': f"Any name resolves to {', '.join(sorted(wildcard_ips))}",
+            'names': '',
+        })
+        if wildcard_matches:
+            findings.append({
+                'type': 'Wildcard matches',
+                'target': f"*.{domain}",
+                'detail': f"{len(wildcard_matches)} names resolve only through the wildcard (full list in the export)",
+                'names': '; '.join(match['subdomain'] for match in wildcard_matches),
+            })
+
+    names_per_ip = {}
+    for name, ips in subdomains_per_ip.items():
+        for ip in dict.fromkeys(ips):
+            names_per_ip.setdefault(ip, []).append(name)
+    shared = sorted(((ip, names) for ip, names in names_per_ip.items() if len(names) >= 2),
+                    key=lambda item: (-len(item[1]), item[0]))
+    for ip, names in shared:
+        more = f" (+{len(names) - 3} more)" if len(names) > 3 else ""
+        findings.append({
+            'type': 'Shared IP',
+            'target': ip,
+            'detail': f"{len(names)} names: {', '.join(names[:3])}{more}",
+            'names': '; '.join(names),
+        })
+
+    _findings_state.update(domain=domain, findings=findings, wildcard_matches=list(wildcard_matches))
+    return findings
+
+
+def print_findings_table(findings):
+    """Prints the findings in the same style as the other tables."""
+    if not findings:
+        return
+    term_width = get_terminal_width()
+    num_width = max(len("#"), len(str(len(findings)))) + 2
+    type_width = max(len("TYPE"), max(len(f['type']) for f in findings)) + 2
+    target_width = max(len("TARGET"), min(max(len(f['target']) for f in findings), 40)) + 2
+    detail_room = max(30, term_width - (num_width + type_width + target_width + 6))
+    detail_width = max(len("DETAIL"), min(max(len(f['detail']) for f in findings), detail_room - 2, 70)) + 2
+    width_total = num_width + type_width + target_width + detail_width + 3
+    pad = " " * max(0, (term_width - width_total - 2) // 2)
+
+    def fit(text, width):
+        return text if len(text) <= width - 2 else text[:width - 5] + "..."
+
+    print_colored(f"\n{pad}{'═' * (width_total + 2)}", Colors.CYAN)
+    print_boxed_row(pad, f"║{'FINDINGS':^{width_total}}║", Colors.BOLD + Colors.WHITE)
+    print_colored(f"{pad}╠{'═' * num_width}╦{'═' * type_width}╦{'═' * target_width}╦{'═' * detail_width}╣", Colors.CYAN)
+    print_boxed_row(pad, f"║{'#':^{num_width}}║{'TYPE':^{type_width}}║{'TARGET':^{target_width}}║{'DETAIL':^{detail_width}}║", Colors.BOLD + Colors.YELLOW)
+    print_colored(f"{pad}╠{'═' * num_width}╬{'═' * type_width}╬{'═' * target_width}╬{'═' * detail_width}╣", Colors.CYAN)
+    import textwrap
+    for index, finding in enumerate(findings, start=1):
+        color = Colors.YELLOW if finding['type'].startswith('Wildcard') else Colors.WHITE
+        # Long details continue on the next lines, as in Table 1
+        detail_lines = textwrap.wrap(finding['detail'], width=detail_width - 2) or [""]
+        for line_number, detail_line in enumerate(detail_lines):
+            first = line_number == 0
+            row = (f"║{(str(index) if first else ''):^{num_width}}║{(finding['type'] if first else ''):^{type_width}}"
+                   f"║{(fit(finding['target'], target_width) if first else ''):^{target_width}}║{(' ' + detail_line):<{detail_width}}║")
+            print_boxed_row(pad, row, color)
+        if index < len(findings):
+            print_colored(f"{pad}╟{'─' * num_width}╫{'─' * type_width}╫{'─' * target_width}╫{'─' * detail_width}╢", Colors.BLUE)
+    print_colored(f"{pad}╚{'═' * num_width}╩{'═' * type_width}╩{'═' * target_width}╩{'═' * detail_width}╝", Colors.CYAN)
+
+
+def save_findings(out_dir, base_tag, domain):
+    """Saves the findings of the last subdomain detection of this domain, and the names that only
+    resolve through a wildcard, next to the other exports. The Excel export turns each CSV into a sheet."""
+    if _findings_state['domain'] != domain:
+        return
+    findings = _findings_state['findings']
+    if findings:
+        save_csv(os.path.join(out_dir, f"{base_tag}_findings.csv"), ["type", "target", "detail", "names"], findings)
+        save_json(os.path.join(out_dir, f"{base_tag}_findings.json"), findings)
+        print_colored(f"[+] {len(findings)} findings saved in the output folder", Colors.GREEN)
+    matches = _findings_state['wildcard_matches']
+    if matches:
+        rows = [{'subdomain': match['subdomain'], 'ips': ', '.join(match['ips'])} for match in matches]
+        save_csv(os.path.join(out_dir, f"{base_tag}_wildcard_matches.csv"), ["subdomain", "ips"], rows)
+        save_json(os.path.join(out_dir, f"{base_tag}_wildcard_matches.json"), rows)
+
+
 def detect_subdomains(domain, show_details=True, show_table2=True, show_summary=True, return_map=False):
     """Detects subdomains from the domain using advanced techniques
 
@@ -1975,12 +2072,14 @@ def detect_subdomains(domain, show_details=True, show_table2=True, show_summary=
     if show_details:
         print_colored(f"\n✅ Domain verified. Proceeding with the scan...", Colors.GREEN)
 
-    # Wildcard DNS: names that do not exist would resolve and look like real subdomains
+    # Wildcard DNS: every name resolves, so guesses that only resolve through it are no evidence of a real host.
+    # They are not deleted: they are set apart from Table 1 and reported as findings.
+    _findings_state.update(domain=None, findings=[], wildcard_matches=[])
     wildcard_ips = detect_wildcard_ips(domain)
-    wildcard_discarded = 0
+    wildcard_matches = []
     if wildcard_ips:
         print_colored(f"[!] Wildcard DNS detected: *.{domain} -> {', '.join(sorted(wildcard_ips))}", Colors.YELLOW)
-        print_colored(f"[*] Brute-force and pattern matches that only resolve to those IPs will be discarded", Colors.BLUE)
+        print_colored(f"[*] Names that only resolve through it are set apart and reported as findings", Colors.BLUE)
     
     # Generate list complete of subdomains
     subdomains_common = generate_list_subdomains_complete()
@@ -2047,7 +2146,7 @@ def detect_subdomains(domain, show_details=True, show_table2=True, show_summary=
                         # Get IP from the subdomain (already resolves CNAMEs automatically)
                         ips = resolve_ips_a_aaaa(f"{subdomain}.{domain}")
                         if ips and wildcard_ips and set(ips) <= wildcard_ips:
-                            wildcard_discarded += 1
+                            wildcard_matches.append({'subdomain': f"{subdomain}.{domain}", 'ips': sorted(ips)})
                             continue
                         progress_data['found'] += 1
                         if ips:
@@ -2244,7 +2343,7 @@ def detect_subdomains(domain, show_details=True, show_table2=True, show_summary=
                 if result:
                     ips = resolve_ips_a_aaaa(f"{sub}.{domain}")
                     if ips and wildcard_ips and set(ips) <= wildcard_ips:
-                        wildcard_discarded += 1
+                        wildcard_matches.append({'subdomain': f"{sub}.{domain}", 'ips': sorted(ips)})
                         continue
                     progress_patrones['found'] += 1
                     if ips:
@@ -2274,8 +2373,8 @@ def detect_subdomains(domain, show_details=True, show_table2=True, show_summary=
     elapsed = time.time() - progress_patrones['start_time']
     elapsed_formatted = f"{int(elapsed//3600):02d}:{int((elapsed%3600)//60):02d}:{int(elapsed%60):02d}"
     print_colored(f"[*] Patterns completed - {progress_patrones['found']} subdomains found in {elapsed_formatted}", Colors.BLUE if progress_patrones['found'] > 0 else Colors.WHITE)
-    if wildcard_discarded:
-        print_colored(f"[*] {wildcard_discarded} names discarded: they only resolve through the wildcard DNS", Colors.YELLOW)
+    if wildcard_matches:
+        print_colored(f"[*] {len(wildcard_matches)} names only resolve through the wildcard DNS: set apart from Table 1 and listed in the findings", Colors.YELLOW)
     
     # Group subdomains for IPs
     subdomains_per_ip = {}
@@ -2372,6 +2471,9 @@ def detect_subdomains(domain, show_details=True, show_table2=True, show_summary=
     
     print(pad1, end="")
     print_colored(f"{'═'*(width_total+1)}", Colors.CYAN)
+
+    # Findings: wildcard DNS and shared IPs
+    print_findings_table(build_findings(domain, subdomains_per_ip, wildcard_ips, wildcard_matches))
     
     # Table 2: Subdomains → Reverse DNS (dynamic)
     # Group reverse DNS for subdomain
@@ -4467,6 +4569,7 @@ def analyze_domain(domain):
         rows_t1.append({"subdomain": sub, "ips": ips_unique})
     save_csv(os.path.join(out_dir, f"{base_tag}_table1_subdomains_ips.csv"), ["subdomain", "ips"], rows_t1)
     save_json(os.path.join(out_dir, f"{base_tag}_table1_subdomains_ips.json"), rows_t1)
+    save_findings(out_dir, base_tag, domain)
 
     # export Table 2 (Option 1): Reverse DNS for subdomain
     # Deduplicate IPs first: many subdomains share the same IP, and each
@@ -4787,6 +4890,7 @@ def run_flow_scan_ports(domain, subdomains_per_ip, ports_scan="-p-"):
     headers_t2 = ["target", "port", "service", "version", "status"]
     save_csv(os.path.join(out_dir, f"{base_tag}_table2_nmap_results.csv"), headers_t2, results_nmap)
     save_json(os.path.join(out_dir, f"{base_tag}_table2_nmap_results.json"), results_nmap)
+    save_findings(out_dir, base_tag, domain)
 
     # --- Folder Consolidated ---
     # Content: CSV, JSON, *_consolidated.xml, *_consolidated.xlsx
