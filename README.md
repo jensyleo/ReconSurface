@@ -11,9 +11,10 @@ Current version: v2.8
   - Analyze domain with ports (DNS + subdomain discovery + Nmap port scan)
   - Analyze URL/Site with ports (Nmap port scan only, no OSINT)
 - Full DNS analysis (A, AAAA, MX, NS, TXT, CNAME, SOA)
-- Subdomain discovery via 49 common brute-force patterns plus 14 free OSINT sources, queried in parallel
+- Subdomain discovery via 200 common brute-force names plus 14 free OSINT sources, queried in parallel
+- Wildcard DNS detection: brute-force and pattern matches that only resolve through a wildcard record are discarded; names confirmed by OSINT are always kept
 - Nmap port scanning with 5 modes: single port, range, group, mixed, or all ports (`-p-`)
-- Real-time progress bar with automatic timing calibration across 5 scan phases
+- Real-time progress bar with automatic timing calibration across 5 scan phases. The percentage is an estimate: if Nmap prints nothing for 10 minutes, the bar shows `[nmap silent MM:SS]`
 - Robust CONTROL-C handling at any point during execution (sudo prompt, scanning, OSINT queries, menu input)
 - Open and closed ports both included in results and exports
 - Full export to CSV, JSON, XML, and a consolidated Excel workbook

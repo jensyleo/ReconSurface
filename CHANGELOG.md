@@ -7,6 +7,8 @@ All notable changes to this project will be documented in this file.
 ### Added
 - IP selection menu, asked once per group of domains that share IPs: scan only the most shared IP or all IPs of the group
 - Colored table of the shared IPs of a group, with the share of domains per IP
+- Wildcard DNS detection: random names are resolved before the scan, and brute-force and pattern matches that only resolve to the wildcard IPs are discarded. Names confirmed by OSINT are kept
+- Warning `[nmap silent MM:SS]` in the progress bar when Nmap prints nothing for 10 minutes
 - Full table of the group's domains; groups of 200 or more domains are saved to `RESULTS/` and the file path is shown
 
 ### Changed

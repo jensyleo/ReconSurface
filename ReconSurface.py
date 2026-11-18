@@ -1994,6 +1994,13 @@ def detect_subdomains(domain, show_details=True, show_table2=True, show_summary=
     
     if show_details:
         print_colored(f"\n✅ Domain verified. Proceeding with the scan...", Colors.GREEN)
+
+    # Wildcard DNS: names that do not exist would resolve and look like real subdomains
+    wildcard_ips = detect_wildcard_ips(domain)
+    wildcard_discarded = 0
+    if wildcard_ips:
+        print_colored(f"[!] Wildcard DNS detected: *.{domain} -> {', '.join(sorted(wildcard_ips))}", Colors.YELLOW)
+        print_colored(f"[*] Brute-force and pattern matches that only resolve to those IPs will be discarded", Colors.BLUE)
     
     # Generate list complete of subdomains
     subdomains_common = generate_list_subdomains_complete()
@@ -2057,9 +2064,12 @@ def detect_subdomains(domain, show_details=True, show_table2=True, show_summary=
                 try:
                     result = future.result()
                     if result:
-                        progress_data['found'] += 1
                         # Get IP from the subdomain (already resolves CNAMEs automatically)
                         ips = resolve_ips_a_aaaa(f"{subdomain}.{domain}")
+                        if ips and wildcard_ips and set(ips) <= wildcard_ips:
+                            wildcard_discarded += 1
+                            continue
+                        progress_data['found'] += 1
                         if ips:
                             subdomains_found.append(subdomain)
                             ips_unique.update(ips)
@@ -2252,8 +2262,11 @@ def detect_subdomains(domain, show_details=True, show_table2=True, show_summary=
             try:
                 result = verify_dns_existence(f"{sub}.{domain}")
                 if result:
-                    progress_patrones['found'] += 1
                     ips = resolve_ips_a_aaaa(f"{sub}.{domain}")
+                    if ips and wildcard_ips and set(ips) <= wildcard_ips:
+                        wildcard_discarded += 1
+                        continue
+                    progress_patrones['found'] += 1
                     if ips:
                         subdomains_found.append(sub)
                         ips_unique.update(ips)
@@ -2281,6 +2294,8 @@ def detect_subdomains(domain, show_details=True, show_table2=True, show_summary=
     elapsed = time.time() - progress_patrones['start_time']
     elapsed_formatted = f"{int(elapsed//3600):02d}:{int((elapsed%3600)//60):02d}:{int(elapsed%60):02d}"
     print_colored(f"[*] Patterns completed - {progress_patrones['found']} subdomains found in {elapsed_formatted}", Colors.BLUE if progress_patrones['found'] > 0 else Colors.WHITE)
+    if wildcard_discarded:
+        print_colored(f"[*] {wildcard_discarded} names discarded: they only resolve through the wildcard DNS", Colors.YELLOW)
     
     # Group subdomains for IPs
     subdomains_per_ip = {}
@@ -2536,6 +2551,20 @@ def resolve_ips_a_aaaa(domain_fqdn):
     combined = list({ip for ip in (ips_a + ips_aaaa) if is_ip_valid(ip)})
     return combined
 
+def detect_wildcard_ips(domain, probes=3):
+    """Returns the IPs that random, surely non-existent names resolve to (wildcard DNS).
+
+    With a wildcard record every name resolves, so brute-force guesses look like real
+    subdomains. An empty set means the domain has no wildcard.
+    """
+    import random
+    import string
+    wildcard_ips = set()
+    for _ in range(probes):
+        label = "zz" + "".join(random.choices(string.ascii_lowercase + string.digits, k=12))
+        wildcard_ips.update(resolve_ips_a_aaaa(f"{label}.{domain}"))
+    return wildcard_ips
+
 def _kill_nmap_process_group(process, timeout=2.0):
     """
     Terminates an nmap/sudo process started with start_new_session=True.
@@ -2568,6 +2597,9 @@ def _kill_nmap_process_group(process, timeout=2.0):
                 process.kill()
         except Exception:
             pass
+
+NMAP_SILENCE_WARN_SECONDS = 600  # Show a warning in the progress bar when nmap prints nothing for this long
+
 
 def run_nmap_stream(target, sudo_password, ports="-p-", out_dir=None):
     """
@@ -2704,6 +2736,7 @@ def run_nmap_stream(target, sudo_password, ports="-p-", out_dir=None):
         time_completion = meter.get_time_completion()
         time_per_port_filtered = meter.get_time_per_port_filtered()
         progress_nmap = {
+            'last_output_time': time.time(),  # Last time nmap printed a line (to warn when it goes silent)
             'ports_scanned': 0,
             'total_ports': total_ports,
             'active': True,
@@ -3154,13 +3187,19 @@ def run_nmap_stream(target, sudo_password, ports="-p-", out_dir=None):
                         elapsed = time.time() - start_time
                         elapsed_formatted = f"{int(elapsed//3600):02d}:{int((elapsed%3600)//60):02d}:{int(elapsed%60):02d}"
 
+                        # Warn when nmap has been silent for a long time: the percentage is only an estimate
+                        silent_seconds = time.time() - progress_nmap['last_output_time']
+                        silent_suffix = ""
+                        if silent_seconds >= NMAP_SILENCE_WARN_SECONDS:
+                            silent_suffix = f" [nmap silent {int(silent_seconds // 60):02d}:{int(silent_seconds % 60):02d}]"
+
                         # build message complete
-                        message = f"[*] Scanning {progress_nmap['target']}... {chars[i % len(chars)]} {percentage}% {counters}{phase_text} - {elapsed_formatted}"
+                        message = f"[*] Scanning {progress_nmap['target']}... {chars[i % len(chars)]} {percentage}% {counters}{phase_text} - {elapsed_formatted}{silent_suffix}"
                         # limit width from the message a 80 characters max for avoid wrap from the terminal
                         if len(message) > 80:
                             # truncate the message keeping information essential
                             target_short = progress_nmap['target'][:15] if len(progress_nmap['target']) > 15 else progress_nmap['target']
-                            message = f"[*] {target_short}... {chars[i % len(chars)]} {percentage}% {counters} - {elapsed_formatted}"
+                            message = f"[*] {target_short}... {chars[i % len(chars)]} {percentage}% {counters} - {elapsed_formatted}{silent_suffix}"
                             if len(message) > 80:
                                 message = message[:77] + "..."
                         # Use code ANSI for clear until the final of the line (avoids wrap)
@@ -3221,6 +3260,7 @@ def run_nmap_stream(target, sudo_password, ports="-p-", out_dir=None):
                         if ready:
                             line = process.stdout.readline()
                             if line:
+                                progress_nmap['last_output_time'] = time.time()
                                 # DEBUG: Show all the lines for diagnose
                                 if ("Service" in line or "scan" in line.lower() or "Timing" in line or 
                                     "detection" in line.lower() or "Initiating" in line or "Completed" in line or
