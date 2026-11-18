@@ -408,7 +408,7 @@ class NmapTimingMeter:
 # ============================================================================
 
 # Max log files to keep in LOGS/ (the oldest ones are removed)
-MAX_LOGS_EXECUTION = 20
+MAX_LOGS_EXECUTION = 100
 
 
 def _clear_logs_old(logs_dir):
@@ -429,11 +429,15 @@ def _clear_logs_old(logs_dir):
         files_con_mtime.sort(key=lambda x: x[1])
         # Remove the oldest ones until only MAX-1 remain (the new one will be created afterward)
         a_remove = len(files_con_mtime) - (MAX_LOGS_EXECUTION - 1)
+        removed = 0
         for i in range(a_remove):
             try:
                 os.remove(files_con_mtime[i][0])
+                removed += 1
             except OSError:
                 pass
+        if removed:
+            print(f"[INFO] Removed {removed} old log(s): the last {MAX_LOGS_EXECUTION} are kept in LOGS/")
     except (OSError, IOError):
         pass
 
@@ -452,7 +456,7 @@ class TeeLogger:
         
         Args:
             log_file_path: Path from the file of log. If is None, is creates in LOGS/
-                          together to the script. Is applies limit of MAX_LOGS_EXECUTION (20).
+                          together to the script. Is applies limit of MAX_LOGS_EXECUTION (100).
         """
         self.original_stdout = sys.stdout
         self.original_stderr = sys.stderr
@@ -1130,32 +1134,8 @@ def create_output_directory(domain):
     out_dir = os.path.join(base_dir, folder)
     os.makedirs(out_dir, exist_ok=True)
     
-    # Clear folders old AFTER of create the new: keep only the 3 more recent
-    try:
-        folders_existing = []
-        for item in os.listdir(base_dir):
-            item_path = os.path.join(base_dir, item)
-            if os.path.isdir(item_path):
-                # Get timestamp of modification
-                mtime = os.path.getmtime(item_path)
-                folders_existing.append((mtime, item_path))
-        
-        # Sort by modification date (most recent first)
-        folders_existing.sort(reverse=True)
-        
-        # Remove extra folders (keep only 3)
-        if len(folders_existing) > 3:
-            folders_a_remove = folders_existing[3:]
-            for _, folder_path in folders_a_remove:
-                try:
-                    shutil.rmtree(folder_path)
-                    print_colored(f"[+] Removed old result folder: {os.path.basename(folder_path)}", Colors.YELLOW)
-                except Exception as e:
-                    print_colored(f"[!] Could not remove old folder {os.path.basename(folder_path)}: {str(e)}", Colors.YELLOW)
-            print_colored(f"[+] Keeping max 3 folders in RESULTS/", Colors.GREEN)
-    except Exception:
-        pass
-    
+    # Result folders are evidence of past scans: they are never deleted automatically
+
     return out_dir
 
 def save_json(path, data):
@@ -2545,11 +2525,20 @@ def filter_only_ips(records):
 
 def resolve_ips_a_aaaa(domain_fqdn):
     """Resuelve and combines IPs IPv4 (A) e IPv6 (AAAA) for a FQDN."""
+    import ipaddress
     ips_a = resolve_dns_record_command(domain_fqdn, 'A') or []
     ips_aaaa = resolve_dns_record_command(domain_fqdn, 'AAAA') or []
     # Merge and remove duplicates
-    combined = list({ip for ip in (ips_a + ips_aaaa) if is_ip_valid(ip)})
-    return combined
+    unique_ips = {ip for ip in (ips_a + ips_aaaa) if is_ip_valid(ip)}
+
+    # Stable order between runs (a set has no order): IPv4 first, then IPv6, each sorted numerically
+    def order_key(ip):
+        try:
+            address = ipaddress.ip_address(ip)
+            return (address.version, int(address))
+        except ValueError:
+            return (9, 0)
+    return sorted(unique_ips, key=order_key)
 
 def detect_wildcard_ips(domain, probes=3):
     """Returns the IPs that random, surely non-existent names resolve to (wildcard DNS).
@@ -2564,6 +2553,35 @@ def detect_wildcard_ips(domain, probes=3):
         label = "zz" + "".join(random.choices(string.ascii_lowercase + string.digits, k=12))
         wildcard_ips.update(resolve_ips_a_aaaa(f"{label}.{domain}"))
     return wildcard_ips
+
+_ipv6_connectivity = None
+
+
+def has_ipv6_connectivity():
+    """True if this machine has an IPv6 route. A UDP connect sends no packet, it only checks the route."""
+    global _ipv6_connectivity
+    if _ipv6_connectivity is None:
+        try:
+            probe = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+            try:
+                probe.connect(("2001:4860:4860::8888", 80))
+                _ipv6_connectivity = True
+            finally:
+                probe.close()
+        except OSError:
+            _ipv6_connectivity = False
+    return _ipv6_connectivity
+
+
+def announce_ipv6_targets(selected_ips):
+    """Tells the user which IPv6 addresses will be scanned (with nmap -6) and whether they are reachable."""
+    ipv6_targets = sorted({ip for ips in selected_ips.values() for ip in ips if ":" in ip})
+    if not ipv6_targets:
+        return
+    print_colored(f"\n[!] {len(ipv6_targets)} IPv6 address(es) detected: they are scanned with Nmap -6", Colors.YELLOW)
+    if not has_ipv6_connectivity():
+        print_colored("[!] This machine has no IPv6 connectivity: the IPv6 addresses will be skipped", Colors.YELLOW)
+
 
 def _kill_nmap_process_group(process, timeout=2.0):
     """
@@ -2633,6 +2651,8 @@ def run_nmap_stream(target, sudo_password, ports="-p-", out_dir=None):
     """
     # Command nmap with ports selected
     cmd = ['sudo', '-S', '-k', 'nmap', '-Pn', '-sS', '-sV', '-T4', '-vvv', ports, '--max-retries', '2', '--min-rate', '1000', '--min-parallelism', '1000', '--max-parallelism', '1000', '--initial-rtt-timeout', '10s', '--min-rtt-timeout', '10s', '--max-rtt-timeout', '10s', target]
+    if ':' in target:
+        cmd.insert(cmd.index('nmap') + 1, '-6')  # IPv6 literal: nmap requires -6
     
     # Add XML output if a directory is provided
     xml_file = None
@@ -4100,7 +4120,12 @@ def run_scan_ports(selected_ips, sudo_password, ports="-p-", out_dir=None):
         for scan_target in scan_targets:
             scan_groups.setdefault(scan_target, []).append(domain)
 
+    domains_with_rows = set()
     for scan_target, domains in scan_groups.items():
+        if ":" in scan_target and not has_ipv6_connectivity():
+            print_colored(f"\n[-] Skipping {scan_target}: this machine has no IPv6 connectivity", Colors.YELLOW)
+            continue
+
         shared_text = f" (shared by {len(domains)} domains)" if len(domains) > 1 else ""
         print_colored(f"\n[*] Starting scan of ports for: {scan_target}{shared_text}", Colors.BLUE)
         xml_file = run_nmap_stream(scan_target, sudo_password, ports, out_dir)
@@ -4127,18 +4152,22 @@ def run_scan_ports(selected_ips, sudo_password, ports="-p-", out_dir=None):
             if domain_rows:
                 print_colored(f"[+] Open ports detected for {domain}: {len(domain_rows)}", Colors.GREEN)
                 results.extend(domain_rows)
+                domains_with_rows.add(domain)
             else:
-                print_colored(f"[-] No open ports detected for {domain}", Colors.YELLOW)
-                # Add a row of 'without detection' for that appears in the table
-                results.append({
-                    'target': domain,
-                    'target_original': domain,
-                    'port': 'Without DETECTION',
-                    'service': 'Without DETECTION',
-                    'version': 'Without DETECTION',
-                    'status': 'N/A',  # No detection - the status cannot be determined
-                    'sin_detection': True
-                })
+                print_colored(f"[-] No open ports detected for {domain} ({scan_target})", Colors.YELLOW)
+
+    # A domain that ended without any port rows gets one 'without detection' row so it appears in the table
+    for domain in selected_ips:
+        if domain not in domains_with_rows:
+            results.append({
+                'target': domain,
+                'target_original': domain,
+                'port': 'Without DETECTION',
+                'service': 'Without DETECTION',
+                'version': 'Without DETECTION',
+                'status': 'N/A',  # No detection - the status cannot be determined
+                'sin_detection': True
+            })
     return results
 
 def print_table_nmap(results, domain_base=None):
@@ -4650,6 +4679,7 @@ def run_flow_scan_ports(domain, subdomains_per_ip, ports_scan="-p-"):
     selected_ips = choose_scan_targets(subdomains_per_ip)
     if selected_ips is None:
         return "abort"  # User cancelled the IP selection
+    announce_ipv6_targets(selected_ips)
 
     # request password of sudo with 3 attempts (CONTROL-C during getpass: returns to the menu)
     sudo_password = None
