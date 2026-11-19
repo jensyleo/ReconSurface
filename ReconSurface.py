@@ -2094,7 +2094,7 @@ def select_cdn_policy_interactive(cdn_names):
     cols = [("PROVIDER", 20), ("DOMAINS", 9), ("EVIDENCE (FIRST DOMAIN)", 52)]
     width_total = sum(w for _, w in cols) + len(cols) - 1
     pad = " " * max(0, (get_terminal_width() - width_total - 2) // 2)
-    print_colored(f"\n{pad}{'═' * (width_total + 2)}", Colors.CYAN)
+    print_colored(f"\n{pad}╔{'╦'.join('═' * w for _, w in cols)}╗", Colors.CYAN)
     print_boxed_row(pad, "║" + "║".join(f"{name:^{w}}" for name, w in cols) + "║", Colors.BOLD + Colors.YELLOW)
     print_colored(f"{pad}╠{'╬'.join('═' * w for _, w in cols)}╣", Colors.CYAN)
     for provider, names in sorted(by_provider.items()):
@@ -2233,7 +2233,7 @@ def print_findings_table(findings):
     def fit(text, width):
         return text if len(text) <= width - 2 else text[:width - 5] + "..."
 
-    print_colored(f"\n{pad}{'═' * (width_total + 2)}", Colors.CYAN)
+    print_colored(f"\n{pad}╔{'═' * width_total}╗", Colors.CYAN)
     print_boxed_row(pad, f"║{'FINDINGS':^{width_total}}║", Colors.BOLD + Colors.WHITE)
     print_colored(f"{pad}╠{'═' * num_width}╦{'═' * type_width}╦{'═' * target_width}╦{'═' * detail_width}╣", Colors.CYAN)
     print_boxed_row(pad, f"║{'#':^{num_width}}║{'TYPE':^{type_width}}║{'TARGET':^{target_width}}║{'DETAIL':^{detail_width}}║", Colors.BOLD + Colors.YELLOW)
@@ -2652,14 +2652,14 @@ def detect_subdomains(domain, show_details=True, show_table2=True, show_summary=
 
     # Show results in dos tables separated (centered)
     print(pad1, end="")
-    print_colored(f"{'═'*(width_total+1)}", Colors.CYAN)
+    print_colored(f"╔{'═'*(width_total-1)}╗", Colors.CYAN)
     # Title of the table 1 with barras blue
     print(pad1, end="")
     print_colored("║", Colors.BLUE, end="")
     print_colored(f"{'📊 TABLE 1: SUBDOMAINS → IPs':^{width_total-2}}", Colors.BOLD + Colors.WHITE, end="")
     print_colored("║", Colors.BLUE)
     print(pad1, end="")
-    print_colored(f"{'═'*(width_total+1)}", Colors.CYAN)
+    print_colored(f"╠{'═'*width_subdomain}╦{'═'*width_ips}╣", Colors.CYAN)
     
     # Header of the table 1 with barras blue
     print(pad1, end="")
@@ -2690,7 +2690,7 @@ def detect_subdomains(domain, show_details=True, show_table2=True, show_summary=
             print_colored(f"╟{'─'*width_subdomain}╫{'─'*width_ips}╢", Colors.BLUE)
     
     print(pad1, end="")
-    print_colored(f"{'═'*(width_total+1)}", Colors.CYAN)
+    print_colored(f"╚{'═'*width_subdomain}╩{'═'*width_ips}╝", Colors.CYAN)
 
     # Findings: wildcard DNS, CDN providers and shared IPs
     print_colored("\n[*] Checking for CDN providers...", Colors.BLUE)
@@ -2732,13 +2732,13 @@ def detect_subdomains(domain, show_details=True, show_table2=True, show_summary=
         # Print header of table 2
         print("\n", end="")
         print(pad2, end="")
-        print_colored(f"{'═'*(width_total_t2+1)}", Colors.CYAN)
+        print_colored(f"╔{'═'*(width_total_t2-1)}╗", Colors.CYAN)
         print(pad2, end="")
         print_colored("║", Colors.BLUE, end="")
         print_colored(f"{'🌐 TABLE 2: SUBDOMAINS → REVERSE DNS':^{width_total_t2-2}}", Colors.BOLD + Colors.WHITE, end="")
         print_colored("║", Colors.BLUE)
         print(pad2, end="")
-        print_colored(f"{'═'*(width_total_t2+1)}", Colors.CYAN)
+        print_colored(f"╠{'═'*width_sub_t2}╦{'═'*width_rev_t2}╣", Colors.CYAN)
         print(pad2, end="")
         print_colored("║", Colors.BLUE, end="")
         print_colored(f"{'SUBDOMAINS':^{width_sub_t2}}", Colors.BOLD + Colors.YELLOW, end="")
@@ -2773,7 +2773,7 @@ def detect_subdomains(domain, show_details=True, show_table2=True, show_summary=
                 print_colored(f"╟{'─'*width_sub_t2}╫{'─'*width_rev_t2}╢", Colors.BLUE)
         
         print(pad2, end="")
-        print_colored(f"{'═'*(width_total_t2+1)}", Colors.CYAN)
+        print_colored(f"╚{'═'*width_sub_t2}╩{'═'*width_rev_t2}╝", Colors.CYAN)
     
     if show_summary:
         # Summary final
@@ -4291,7 +4291,7 @@ def print_shared_ip_table(group_domains, subdomains_per_ip, common_ip):
     width_total = sum(w for _, w in cols) + len(cols) - 1
     pad = " " * max(0, (get_terminal_width() - width_total - 2) // 2)
 
-    print_colored(f"\n{pad}{'═' * (width_total + 2)}", Colors.CYAN)
+    print_colored(f"\n{pad}╔{'═' * width_total}╗", Colors.CYAN)
     print_boxed_row(pad, f"║{title:^{width_total}}║", Colors.BOLD + Colors.WHITE)
     print_colored(f"{pad}╠{'╦'.join('═' * w for _, w in cols)}╣", Colors.CYAN)
     print_boxed_row(pad, "║" + "║".join(f"{name:^{w}}" for name, w in cols) + "║", Colors.BOLD + Colors.YELLOW)
@@ -4319,7 +4319,7 @@ def build_domains_table_lines(group_domains, subdomains_per_ip):
     width_total = num_width + domain_width + ips_width + 2
 
     lines = [
-        "═" * (width_total + 2),
+        "╔" + "═" * width_total + "╗",
         f"║{'DOMAINS OF THE GROUP':^{width_total}}║",
         f"╠{'═' * num_width}╦{'═' * domain_width}╦{'═' * ips_width}╣",
         f"║{'#':^{num_width}}║{'DOMAIN':^{domain_width}}║{'IPS':^{ips_width}}║",
@@ -4540,14 +4540,14 @@ def print_table_nmap(results, domain_base=None):
     pad = " " * margin
 
     print("\n", end="")
-    print(pad, end=""); print_colored(f"{'═'*(width_total+2)}", Colors.CYAN)
+    print(pad, end=""); print_colored(f"╔{'═'*width_total}╗", Colors.CYAN)
     print(pad, end=""); print_colored("║", Colors.BLUE, end=""); print_colored(f"{title:^{width_total-1}}", Colors.BOLD + Colors.WHITE, end=""); print_colored("║", Colors.BLUE)
-    print(pad, end=""); print_colored(f"{'═'*(width_total+2)}", Colors.CYAN)
+    print(pad, end=""); print_colored(f"╠{'╦'.join(['═'*width1, '═'*width2, '═'*width3, '═'*width4, '═'*width5])}╣", Colors.CYAN)
     print(pad, end=""); print_colored("║", Colors.BLUE, end=""); print_colored(f"{col1:^{width1}}", Colors.BOLD + Colors.YELLOW, end=""); print_colored("║", Colors.BLUE, end=""); print_colored(f"{col2:^{width2}}", Colors.BOLD + Colors.YELLOW, end=""); print_colored("║", Colors.BLUE, end=""); print_colored(f"{col3:^{width3}}", Colors.BOLD + Colors.YELLOW, end=""); print_colored("║", Colors.BLUE, end=""); print_colored(f"{col4:^{width4}}", Colors.BOLD + Colors.YELLOW, end=""); print_colored("║", Colors.BLUE, end=""); print_colored(f"{col5:^{width5}}", Colors.BOLD + Colors.YELLOW, end=""); print_colored("║", Colors.BLUE)
     print(pad, end=""); print_colored(f"╠{'═'*width1}╬{'═'*width2}╬{'═'*width3}╬{'═'*width4}╬{'═'*width5}╣", Colors.CYAN)
 
     if not results:
-        print(pad, end=""); print_colored("║", Colors.BLUE, end=""); print_colored(f"{'Without results':^{width_total-2}}", Colors.WHITE, end=""); print_colored("║", Colors.BLUE)
+        print(pad, end=""); print_colored("║", Colors.BLUE, end=""); print_colored(f"{'Without results':^{width_total}}", Colors.WHITE, end=""); print_colored("║", Colors.BLUE)
     else:
         # Sort for target original and port, placing the main first if is specific
         def sort_key(r):
@@ -4602,7 +4602,7 @@ def print_table_nmap(results, domain_base=None):
                     # Line separator normal
                     print(pad, end=""); print_colored(f"╟{'─'*width1}╫{'─'*width2}╫{'─'*width3}╫{'─'*width4}╫{'─'*width5}╢", Colors.BLUE)
 
-    print(pad, end=""); print_colored(f"{'═'*(width_total+2)}", Colors.CYAN)
+    print(pad, end=""); print_colored(f"╚{'╩'.join(['═'*width1, '═'*width2, '═'*width3, '═'*width4, '═'*width5])}╝", Colors.CYAN)
 
 def format_long_text(text, width_max):
     """formats text long for that is adjustment inside from the width specified"""

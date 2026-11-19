@@ -25,6 +25,7 @@ All notable changes to this project will be documented in this file.
 - Security policy moved from `SECURITY.md` into the README, and the shell injection issue in DNS lookups is documented as a known limitation
 
 ### Fixed
+- Table borders: the cyan tables (subdomains, reverse DNS, port results, shared IPs, findings and CDN) used loose lines on top and bottom, so they did not meet the column bars. They now draw proper corners and junctions, like the menus. The "Without results" row of the port table was also two columns shorter than the table
 - Real subdomains were silently missed under load: a DNS query that timed out was counted as "the name does not exist", and an empty answer as "no addresses". A failed query is now retried (up to 3 passes), and only a real NXDOMAIN counts as absent
 - CDN edge IPs were reported as "Shared IP" findings. They are shared by design and are no longer listed there
 - IP order was random between runs, so "first IP" could change or be an IPv6 address. IPs are now sorted: IPv4 first, then IPv6
