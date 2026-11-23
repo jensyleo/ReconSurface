@@ -4192,6 +4192,13 @@ def parse_nmap_xml(xml_file, target_original=None):
                             hostname = address.get('addr')
                             break
             
+            # IP this host was scanned on (a domain scanned through several IPs has rows for each one)
+            host_ip = ""
+            for address in host.findall('address'):
+                if address.get('addrtype') in ('ipv4', 'ipv6'):
+                    host_ip = address.get('addr', "")
+                    break
+
             # Get ports open and closed
             for ports in host.findall('ports'):
                 for port in ports.findall('port'):
@@ -4219,6 +4226,7 @@ def parse_nmap_xml(xml_file, target_original=None):
                             results.append({
                                 'target': hostname,
                                 'target_original': hostname,
+                                'ip': host_ip,
                                 'port': port_id,
                                 'service': service,
                                 'version': version,
@@ -4503,80 +4511,105 @@ def run_scan_ports(selected_ips, sudo_password, ports="-p-", out_dir=None):
             })
     return results
 
-def print_table_nmap(results, domain_base=None):
-    """Prints the Table 2 with columns: target, port, service, version, status.
+def sort_scan_rows(results, domain_base=None):
+    """Orders the port rows by domain, IP and port, and labels only the first row of each domain.
 
-    If domain_base is provided, mark that target with (MAIN).
+    A domain scanned through several IPs has rows for each IP; this keeps them together and in
+    the same order on screen and in the exports.
+    """
+    import ipaddress
+
+    def ip_key(ip):
+        try:
+            address = ipaddress.ip_address(ip)
+            return (0, address.version, int(address))
+        except ValueError:
+            return (1, 0, 0)
+
+    def port_key(row):
+        try:
+            return int(row['port'])
+        except (ValueError, TypeError):
+            return 0
+
+    ordered = sorted(results, key=lambda r: (0 if domain_base and r['target_original'] == domain_base else 1,
+                                             r['target_original'], ip_key(r.get('ip', '')), port_key(r)))
+    previous = None
+    labeled = []
+    for row in ordered:
+        row = dict(row)
+        row['target'] = row['target_original'] if row['target_original'] != previous else ''
+        previous = row['target_original']
+        labeled.append(row)
+    return labeled
+
+
+def print_table_nmap(results, domain_base=None):
+    """Prints the Table 2 with columns: target, ip, port, service, version, status.
+
+    If domain_base is provided, mark that target with (MAIN). The target is shown once per domain and
+    the IP once per IP, so a domain scanned through several IPs shows which IP each port belongs to.
     """
     title = "🌐 TABLE 2: PORT SCAN RESULTS"
-    col1 = "TARGET"
-    col2 = "PORT"
-    col3 = "service"
-    col4 = "VERSION"
-    col5 = "STATUS"
+    columns = ["TARGET", "IP", "PORT", "service", "VERSION", "STATUS"]
 
-    # Calculate widths considering the possible marks (MAIN)
-    def target_displayable_para_width(obj):
-        if domain_base and obj == domain_base:
-            return f"{obj} (MAIN)"
-        return obj
+    rows = sort_scan_rows(results, domain_base)
+
+    def target_text(row):
+        name = row['target_original']
+        return f"{name} (MAIN)" if domain_base and name == domain_base else name
 
     # Calculate widths
-    width1 = max(len(col1), max((len(target_displayable_para_width(r['target'])) for r in results), default=0))
-    width2 = max(len(col2), max((len(r['port']) for r in results), default=0))
-    width3 = max(len(col3), max((len(r['service']) for r in results), default=0))
-    width4 = max(len(col4), max((len(r.get('version', '')) for r in results), default=0))
-    width5 = max(len(col5), max((len(r.get('status', 'open')) for r in results), default=0))
+    width1 = max(len(columns[0]), max((len(target_text(r)) for r in rows), default=0))
+    width2 = max(len(columns[1]), max((len(r.get('ip') or '-') for r in rows), default=0))
+    width3 = max(len(columns[2]), max((len(r['port']) for r in rows), default=0))
+    width4 = max(len(columns[3]), max((len(r['service']) for r in rows), default=0))
+    width5 = max(len(columns[4]), max((len(r.get('version', '')) for r in rows), default=0))
+    width6 = max(len(columns[5]), max((len(r.get('status', 'open')) for r in rows), default=0))
 
     width1 = max(22, min(width1 + 2, 60))
-    width2 = max(8, min(width2 + 2, 15))
-    width3 = max(10, min(width3 + 2, 25))
-    width4 = max(15, min(width4 + 2, 40))
-    width5 = max(8, min(width5 + 2, 12))
-    width_total = width1 + width2 + width3 + width4 + width5 + 4  # 4 separators between 5 columns
+    width2 = max(17, min(width2 + 2, 41))
+    width3 = max(8, min(width3 + 2, 15))
+    width4 = max(10, min(width4 + 2, 25))
+    width5 = max(15, min(width5 + 2, 40))
+    width6 = max(8, min(width6 + 2, 12))
+    widths = [width1, width2, width3, width4, width5, width6]
+    width_total = sum(widths) + len(widths) - 1  # separators between the columns
 
     term_width = get_terminal_width()
     margin = max(0, (term_width - width_total) // 2)
     pad = " " * margin
 
+    def border_line(left, middle, right, fill="═"):
+        return f"{left}{middle.join(fill * w for w in widths)}{right}"
+
     print("\n", end="")
     print(pad, end=""); print_colored(f"╔{'═'*width_total}╗", Colors.CYAN)
     print(pad, end=""); print_colored("║", Colors.BLUE, end=""); print_colored(f"{title:^{width_total-1}}", Colors.BOLD + Colors.WHITE, end=""); print_colored("║", Colors.BLUE)
-    print(pad, end=""); print_colored(f"╠{'╦'.join(['═'*width1, '═'*width2, '═'*width3, '═'*width4, '═'*width5])}╣", Colors.CYAN)
-    print(pad, end=""); print_colored("║", Colors.BLUE, end=""); print_colored(f"{col1:^{width1}}", Colors.BOLD + Colors.YELLOW, end=""); print_colored("║", Colors.BLUE, end=""); print_colored(f"{col2:^{width2}}", Colors.BOLD + Colors.YELLOW, end=""); print_colored("║", Colors.BLUE, end=""); print_colored(f"{col3:^{width3}}", Colors.BOLD + Colors.YELLOW, end=""); print_colored("║", Colors.BLUE, end=""); print_colored(f"{col4:^{width4}}", Colors.BOLD + Colors.YELLOW, end=""); print_colored("║", Colors.BLUE, end=""); print_colored(f"{col5:^{width5}}", Colors.BOLD + Colors.YELLOW, end=""); print_colored("║", Colors.BLUE)
-    print(pad, end=""); print_colored(f"╠{'═'*width1}╬{'═'*width2}╬{'═'*width3}╬{'═'*width4}╬{'═'*width5}╣", Colors.CYAN)
+    print(pad, end=""); print_colored(border_line("╠", "╦", "╣"), Colors.CYAN)
+    print(pad, end="")
+    print_colored("║", Colors.BLUE, end="")
+    for name, width in zip(columns, widths):
+        print_colored(f"{name:^{width}}", Colors.BOLD + Colors.YELLOW, end="")
+        print_colored("║", Colors.BLUE, end="")
+    print()
+    print(pad, end=""); print_colored(border_line("╠", "╬", "╣"), Colors.CYAN)
 
-    if not results:
+    if not rows:
         print(pad, end=""); print_colored("║", Colors.BLUE, end=""); print_colored(f"{'Without results':^{width_total}}", Colors.WHITE, end=""); print_colored("║", Colors.BLUE)
     else:
-        # Sort for target original and port, placing the main first if is specific
-        def sort_key(r):
-            port = r['port']
-            # Handle "Without DETECTION" as port 0 for sorting
-            try:
-                port_num = int(port) if port != 'Without DETECTION' else 0
-            except (ValueError, TypeError):
-                port_num = 0
-            return port_num
-        
-        if domain_base:
-            # Group for target original and sort ports inside of each group
-            results_sorted = sorted(results, key=lambda r: (0 if r['target_original'] == domain_base else 1, r['target_original'], sort_key(r)))
-        else:
-            results_sorted = sorted(results, key=lambda r: (r['target_original'], sort_key(r)))
-        for i, r in enumerate(results_sorted):
-            obj = r['target']
-            if domain_base and obj == domain_base:
-                obj = f"{obj} (MAIN)"
-                color_subdomain = Colors.RED
-            else:
-                color_subdomain = Colors.GREEN
-            # determine if is row of 'without detection'
-            es_sin = r.get('sin_detection', False)
+        for i, r in enumerate(rows):
+            first_of_target = r['target'] != ""
+            ip = r.get('ip') or ""
+            first_of_ip = first_of_target or ip != (rows[i - 1].get('ip') or "")
+
+            is_main = bool(domain_base and r['target_original'] == domain_base)
+            color_subdomain = Colors.RED if is_main else Colors.GREEN
             color_other_columns = Colors.GREEN
+            port_txt, service_txt = r['port'], r['service']
             version_txt = r.get('version', '')
             status_txt = r.get('status', 'open')
-            if es_sin:
+            if r.get('sin_detection', False):
                 color_subdomain = Colors.ORANGE
                 color_other_columns = Colors.ORANGE
                 # Use the text of the row itself: 'Without DETECTION' or, for skipped CDN domains, 'Skipped (CDN)'
@@ -4584,25 +4617,38 @@ def print_table_nmap(results, domain_base=None):
                 service_txt = r.get('service') or "Without DETECTION"
                 version_txt = r.get('version') or "Without DETECTION"
                 status_txt = "N/A"
-            else:
-                port_txt = r['port']
-                service_txt = r['service']
-            
             # Color for status: green if open, orange if closed
             color_status = Colors.GREEN if status_txt == 'open' else Colors.ORANGE
-            
-            print(pad, end=""); print_colored("║", Colors.BLUE, end=""); print_colored(f"{obj:^{width1}}", color_subdomain, end=""); print_colored("║", Colors.BLUE, end=""); print_colored(f"{port_txt:^{width2}}", color_other_columns, end=""); print_colored("║", Colors.BLUE, end=""); print_colored(f"{service_txt:^{width3}}", color_other_columns, end=""); print_colored("║", Colors.BLUE, end=""); print_colored(f"{version_txt:^{width4}}", color_other_columns, end=""); print_colored("║", Colors.BLUE, end=""); print_colored(f"{status_txt:^{width5}}", color_status, end=""); print_colored("║", Colors.BLUE)
-            if i < len(results_sorted) - 1:
-                # Verify if the next row has target empty for create effect of cells merged
-                next_row = results_sorted[i + 1]
-                if next_row['target'] == "":
-                    # Line separator that not crosses the first column (cell merged)
-                    print(pad, end=""); print_colored(f"║{' '*width1}╟{'─'*width2}╫{'─'*width3}╫{'─'*width4}╫{'─'*width5}╢", Colors.BLUE)
-                else:
-                    # Line separator normal
-                    print(pad, end=""); print_colored(f"╟{'─'*width1}╫{'─'*width2}╫{'─'*width3}╫{'─'*width4}╫{'─'*width5}╢", Colors.BLUE)
 
-    print(pad, end=""); print_colored(f"╚{'╩'.join(['═'*width1, '═'*width2, '═'*width3, '═'*width4, '═'*width5])}╝", Colors.CYAN)
+            cells = [
+                (target_text(r) if first_of_target else "", color_subdomain),
+                ((ip or "-") if first_of_ip else "", color_other_columns),
+                (port_txt, color_other_columns),
+                (service_txt, color_other_columns),
+                (version_txt, color_other_columns),
+                (status_txt, color_status),
+            ]
+            print(pad, end="")
+            print_colored("║", Colors.BLUE, end="")
+            for (text, color), width in zip(cells, widths):
+                print_colored(f"{text:^{width}}", color, end="")
+                print_colored("║", Colors.BLUE, end="")
+            print()
+
+            if i < len(rows) - 1:
+                # Separator to the next row: the target and IP cells stay merged while they repeat
+                next_row = rows[i + 1]
+                same_target = next_row['target'] == ""
+                same_ip = same_target and (next_row.get('ip') or "") == ip
+                if same_ip:
+                    line = f"║{' '*width1}║{' '*width2}╟{'╫'.join('─' * w for w in widths[2:])}╢"
+                elif same_target:
+                    line = f"║{' '*width1}╟{'╫'.join('─' * w for w in widths[1:])}╢"
+                else:
+                    line = border_line("╟", "╫", "╢", "─")
+                print(pad, end=""); print_colored(line, Colors.BLUE)
+
+    print(pad, end=""); print_colored(border_line("╚", "╩", "╝"), Colors.CYAN)
 
 def format_long_text(text, width_max):
     """formats text long for that is adjustment inside from the width specified"""
@@ -5140,7 +5186,8 @@ def run_flow_scan_ports(domain, subdomains_per_ip, ports_scan="-p-"):
     base_tag = re.sub(r"_\d{2}-\d{2}-\d{4}_\d{2}:\d{2}$", "", session_tag)
 
     # export results of nmap a CSV and JSON (including status: open/closed)
-    headers_t2 = ["target", "port", "service", "version", "status"]
+    results_nmap = sort_scan_rows(results_nmap, domain)
+    headers_t2 = ["target", "ip", "port", "service", "version", "status"]
     save_csv(os.path.join(out_dir, f"{base_tag}_table2_nmap_results.csv"), headers_t2, results_nmap)
     save_json(os.path.join(out_dir, f"{base_tag}_table2_nmap_results.json"), results_nmap)
     save_findings(out_dir, base_tag, domain)

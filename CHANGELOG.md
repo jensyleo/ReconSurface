@@ -16,6 +16,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - Each unique IP is scanned once; its results are copied to every domain that resolves to it
+- The port results table and `*_table2_nmap_results.csv/json` have an `ip` column. Rows are ordered by domain, IP and port, and the domain and the IP are shown once per group, so ports repeated across the IPs of one domain are no longer ambiguous
 - Shared-IP tables use the same colors as the port results table: blue borders, colored text
 - Result folders in `RESULTS/` are no longer deleted automatically (before, only the 3 most recent were kept)
 - Execution logs keep the last 100 (before, 20), and the program reports when it removes old ones

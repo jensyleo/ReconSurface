@@ -18,7 +18,7 @@ Current version: v2.8
 - Nmap port scanning with 5 modes: single port, range, group, mixed, or all ports (`-p-`)
 - Real-time progress bar with automatic timing calibration across 5 scan phases. The percentage is an estimate: if Nmap prints nothing for 10 minutes, the bar shows `[nmap silent MM:SS]`
 - Robust CONTROL-C handling at any point during execution (sudo prompt, scanning, OSINT queries, menu input)
-- Open and closed ports both included in results and exports
+- Open and closed ports both included in results and exports. Each row shows the IP it was scanned on, so a domain scanned through several IPs shows which IP each port belongs to
 - Full export to CSV, JSON, XML, and a consolidated Excel workbook
 - WHOIS lookup (registrant, creation/expiration dates, name servers, status)
 - SSL certificate validation with expiration alerts (critical <30 days, warning 30-90 days, safe >90 days)
